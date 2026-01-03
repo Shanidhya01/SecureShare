@@ -1,0 +1,29 @@
+# Node
+node_modules/
+
+# Env & secrets
+.env
+*.pem
+
+# Uploads (encrypted files)
+uploads/
+
+# Logs
+logs/
+npm-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build
+dist/
+
+
+public.pem
+private.pem
