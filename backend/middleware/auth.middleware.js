@@ -1,13 +1,14 @@
 import jwt from "jsonwebtoken";
 
-export default (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.sendStatus(401);
+export default function (req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(403).json({ error: "No token" });
 
   try {
+    const token = authHeader.split(" ")[1];
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {
-    res.sendStatus(403);
+    res.status(403).json({ error: "Invalid token" });
   }
-};
+}

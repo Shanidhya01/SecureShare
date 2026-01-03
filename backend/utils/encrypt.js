@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-export function encryptBuffer(buffer) {
+export const encryptBuffer = (buffer) => {
   const aesKey = crypto.randomBytes(32);
   const iv = crypto.randomBytes(16);
 
@@ -8,4 +8,4 @@ export function encryptBuffer(buffer) {
   const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
 
   return { encrypted, aesKey, iv };
-}
+};
