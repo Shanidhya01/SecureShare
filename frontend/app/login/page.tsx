@@ -196,7 +196,7 @@ export default function Login() {
 
         {/* Footer Text */}
         <div className="mt-6 text-center text-slate-400 text-sm">
-          <p>🔐 Military-grade encryption • Secure & Compliant</p>
+          <p> Military-grade encryption • Secure & Compliant</p>
         </div>
       </div>
     </div>

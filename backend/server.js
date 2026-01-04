@@ -22,7 +22,7 @@ app.use("/api/files", fileRoutes);
 
 // Root and health endpoints
 app.get("/", (req, res) => {
-  res.send("SecureShare API is running. Use /api/* endpoints.");
+  res.send("SecureShare API is running.");
 });
 
 app.get("/api/health", (req, res) => {

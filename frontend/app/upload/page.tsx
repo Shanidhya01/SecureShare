@@ -151,7 +151,7 @@ export default function UploadFile() {
       // Redirect to dashboard after 2 seconds
       setTimeout(() => {
         router.push("/dashboard");
-      }, 2000);
+      }, 1000);
     } catch (err: any) {
       const serverError = err?.response?.data?.error || err?.response?.data?.message;
       const errorMessage = serverError || err.message || "Upload failed. Please try again.";
