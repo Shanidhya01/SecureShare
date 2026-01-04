@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock } from "lucide-react";
@@ -13,7 +13,18 @@ export default function UploadFile() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [password, setPassword] = useState("");
+  const [usePassword, setUsePassword] = useState(false);
   const router = useRouter();
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  useEffect(() => {
+    if (!token) {
+      setError("Please log in to upload files.");
+      const t = setTimeout(() => router.push("/login"), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [router, token]);
 
   const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
   const ALLOWED_TYPES = [
@@ -109,6 +120,9 @@ export default function UploadFile() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (usePassword && password.trim().length > 0) {
+        formData.append("password", password.trim());
+      }
 
       // Simulate progress for better UX (actual progress can be tracked with axios)
       const progressInterval = setInterval(() => {
@@ -139,12 +153,14 @@ export default function UploadFile() {
         router.push("/dashboard");
       }, 2000);
     } catch (err: any) {
-      const errorMessage =
-        err.response?.data?.message ||
-        err.message ||
-        "Upload failed. Please try again.";
+      const serverError = err?.response?.data?.error || err?.response?.data?.message;
+      const errorMessage = serverError || err.message || "Upload failed. Please try again.";
       setError(errorMessage);
       toast.error(errorMessage);
+      if (process.env.NODE_ENV !== "production") {
+        // Helpful debug info during development
+        console.error("Upload failed:", err?.response?.data || err);
+      }
     } finally {
       setUploading(false);
     }
@@ -264,6 +280,32 @@ export default function UploadFile() {
                   >
                     <X size={20} />
                   </button>
+                </div>
+                {/* Optional Password */}
+                <div className="mt-4 grid grid-cols-1 gap-3">
+                  <label className="flex items-center gap-2 text-slate-300 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={usePassword}
+                      onChange={(e) => setUsePassword(e.target.checked)}
+                      disabled={uploading}
+                    />
+                    Protect with password
+                  </label>
+                  {usePassword && (
+                    <div className="relative">
+                      <Lock size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter a download password"
+                        className="w-full pl-10 pr-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                        disabled={uploading}
+                      />
+                      <p className="text-slate-500 text-xs mt-2">Recipients must provide this password to download.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

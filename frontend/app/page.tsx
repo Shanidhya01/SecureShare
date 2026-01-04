@@ -69,7 +69,7 @@ export default function SecureFileSharing() {
             Share files with confidence. Military-grade encryption, time-limited access, and complete audit trails.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
+          {/* <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <button
               onClick={() => router.push('/login')}
               className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg hover:from-blue-600 hover:to-cyan-600 transition-all shadow-lg hover:shadow-blue-500/50 text-lg"
@@ -82,7 +82,7 @@ export default function SecureFileSharing() {
             >
               Create Account
             </button>
-          </div>
+          </div> */}
 
           {/* Features */}
           <div className="grid md:grid-cols-3 gap-6 mt-16">

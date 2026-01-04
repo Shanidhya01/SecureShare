@@ -1,14 +1,28 @@
 "use client";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, LogOut, Lock } from "lucide-react";
+import { Upload, LogOut, Lock, LogIn, UserPlus } from "lucide-react";
 import toast from "react-hot-toast";
 
 export default function Navbar() {
   const router = useRouter();
+  const [isAuthed, setIsAuthed] = useState(false);
+
+  useEffect(() => {
+    const hasToken = !!localStorage.getItem("token");
+    setIsAuthed(hasToken);
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "token") setIsAuthed(!!(e.newValue));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const logout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    setIsAuthed(false);
     toast.success("Logged out");
     router.push("/");
   };
@@ -32,20 +46,47 @@ export default function Navbar() {
 
           {/* Navigation */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/upload")}
-              className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-            >
-              <Upload size={18} />
-              Upload
-            </button>
-            <button
-              onClick={logout}
-              className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-red-300 hover:bg-red-500 hover:bg-opacity-10 rounded-lg transition-all"
-            >
-              <LogOut size={18} />
-              Logout
-            </button>
+            {isAuthed ? (
+              <>
+                <button
+                  onClick={() => router.push("/upload")}
+                  className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                >
+                  <Upload size={18} />
+                  Upload
+                </button>
+                <button
+                  onClick={() => router.push("/dashboard")}
+                  className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                >
+                  DashBoard
+                </button>
+                <button
+                  onClick={logout}
+                  className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-red-300 hover:bg-red-500 hover:bg-opacity-10 rounded-lg transition-all"
+                >
+                  <LogOut size={18} />
+                  Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => router.push("/login")}
+                  className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                >
+                  <LogIn size={18} />
+                  Login
+                </button>
+                <button
+                  onClick={() => router.push("/register")}
+                  className="flex items-center gap-2 px-4 py-2 text-blue-300 hover:text-white hover:bg-blue-600/20 rounded-lg transition-all"
+                >
+                  <UserPlus size={18} />
+                  Register
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

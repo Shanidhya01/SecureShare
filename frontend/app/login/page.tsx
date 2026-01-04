@@ -45,10 +45,9 @@ export default function Login() {
       
       if (res.data?.token) {
         localStorage.setItem("token", res.data.token);
-        // Optional: Store user info
-        if (res.data.user) {
-          localStorage.setItem("user", JSON.stringify(res.data.user));
-        }
+        // Store user info (fallback to entered email if backend doesn't return user)
+        const userInfo = res.data.user ?? { email };
+        localStorage.setItem("user", JSON.stringify(userInfo));
         toast.success("Signed in successfully");
         router.push("/dashboard");
       } else {
