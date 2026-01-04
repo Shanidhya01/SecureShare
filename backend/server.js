@@ -20,4 +20,13 @@ mongoose.connect(process.env.MONGO_URI)
 app.use("/api/auth", authRoutes);
 app.use("/api/files", fileRoutes);
 
+// Root and health endpoints
+app.get("/", (req, res) => {
+  res.send("SecureShare API is running. Use /api/* endpoints.");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
+
 app.listen(5000, () => console.log("Server running"));

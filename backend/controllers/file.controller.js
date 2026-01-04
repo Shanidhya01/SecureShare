@@ -18,11 +18,21 @@ export const uploadFile = async (req, res) => {
       return res.status(500).json({ error: "Cloudinary not configured (missing env vars)" });
     }
 
-    let publicKey;
-    try {
-      publicKey = fs.readFileSync("keys/public.pem", "utf8");
-    } catch (err) {
-      return res.status(500).json({ error: "Public key not found at keys/public.pem" });
+    // Load RSA public key from env or filesystem
+    let publicKey = process.env.RSA_PUBLIC_KEY;
+    if (!publicKey && process.env.RSA_PUBLIC_KEY_BASE64) {
+      try {
+        publicKey = Buffer.from(process.env.RSA_PUBLIC_KEY_BASE64, "base64").toString("utf8");
+      } catch (e) {
+        return res.status(500).json({ error: "Invalid RSA_PUBLIC_KEY_BASE64" });
+      }
+    }
+    if (!publicKey) {
+      try {
+        publicKey = fs.readFileSync("keys/public.pem", "utf8");
+      } catch (err) {
+        return res.status(500).json({ error: "Public key not found. Set RSA_PUBLIC_KEY env or include keys/public.pem" });
+      }
     }
 
     const { encrypted, aesKey, iv } = encryptBuffer(req.file.buffer);
@@ -99,11 +109,21 @@ export const downloadFile = async (req, res) => {
     });
 
     // Decrypt AES key using RSA private key
-    let privateKey;
-    try {
-      privateKey = fs.readFileSync("keys/private.pem", "utf8");
-    } catch (e) {
-      return res.status(500).json({ error: "Private key not found at keys/private.pem" });
+    // Load RSA private key from env or filesystem
+    let privateKey = process.env.RSA_PRIVATE_KEY;
+    if (!privateKey && process.env.RSA_PRIVATE_KEY_BASE64) {
+      try {
+        privateKey = Buffer.from(process.env.RSA_PRIVATE_KEY_BASE64, "base64").toString("utf8");
+      } catch (e) {
+        return res.status(500).json({ error: "Invalid RSA_PRIVATE_KEY_BASE64" });
+      }
+    }
+    if (!privateKey) {
+      try {
+        privateKey = fs.readFileSync("keys/private.pem", "utf8");
+      } catch (e) {
+        return res.status(500).json({ error: "Private key not found. Set RSA_PRIVATE_KEY env or include keys/private.pem" });
+      }
     }
 
     const encryptedKeyBuf = Buffer.from(file.encryptedKey, "base64");
