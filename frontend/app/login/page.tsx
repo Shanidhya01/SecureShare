@@ -48,6 +48,8 @@ export default function Login() {
         // Store user info (fallback to entered email if backend doesn't return user)
         const userInfo = res.data.user ?? { email };
         localStorage.setItem("user", JSON.stringify(userInfo));
+        // notify other components (same tab) about auth state change
+        try { window.dispatchEvent(new Event("auth:changed")); } catch {}
         toast.success("Signed in successfully");
         router.push("/dashboard");
       } else {

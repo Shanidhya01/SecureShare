@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Upload, LogOut, Lock, LogIn, UserPlus } from "lucide-react";
 import toast from "react-hot-toast";
 
 export default function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
   const [isAuthed, setIsAuthed] = useState(false);
 
   useEffect(() => {
@@ -15,14 +16,24 @@ export default function Navbar() {
     const onStorage = (e: StorageEvent) => {
       if (e.key === "token") setIsAuthed(!!(e.newValue));
     };
+    const onAuthChanged = () => setIsAuthed(!!localStorage.getItem("token"));
+    const onFocus = () => setIsAuthed(!!localStorage.getItem("token"));
     window.addEventListener("storage", onStorage);
+    window.addEventListener("auth:changed", onAuthChanged as EventListener);
+    window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // Re-evaluate auth when route changes
+  useEffect(() => {
+    setIsAuthed(!!localStorage.getItem("token"));
+  }, [pathname]);
 
   const logout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setIsAuthed(false);
+    try { window.dispatchEvent(new Event("auth:changed")); } catch {}
     toast.success("Logged out");
     router.push("/");
   };
@@ -33,7 +44,7 @@ export default function Navbar() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <button
-            onClick={() => router.push("/dashboard")}
+            onClick={() => router.push(isAuthed ? "/dashboard" : "/")}
             className="flex items-center gap-2 hover:opacity-80 transition-opacity"
           >
             <div className="bg-gradient-to-r from-blue-500 to-cyan-500 p-2 rounded-lg">

@@ -15,6 +15,8 @@ export default function UploadFile() {
   const [success, setSuccess] = useState(false);
   const [password, setPassword] = useState("");
   const [usePassword, setUsePassword] = useState(false);
+  const [maxDownloads, setMaxDownloads] = useState("1");
+  const [expiryHours, setExpiryHours] = useState("24");
   const router = useRouter();
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
@@ -123,6 +125,8 @@ export default function UploadFile() {
       if (usePassword && password.trim().length > 0) {
         formData.append("password", password.trim());
       }
+      formData.append("maxDownloads", maxDownloads);
+      formData.append("expiryHours", expiryHours);
 
       // Simulate progress for better UX (actual progress can be tracked with axios)
       const progressInterval = setInterval(() => {
@@ -135,18 +139,29 @@ export default function UploadFile() {
         });
       }, 300);
 
-      const response = await api.post("/files/upload", formData, {
+      const request = api.post("/files/upload", formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "multipart/form-data",
         },
       });
 
+      const response = await toast.promise(
+        request,
+        {
+          loading: "Uploading file...",
+          success: "File uploaded successfully",
+          error: (err: any) =>
+            err?.response?.data?.error || err?.response?.data?.message || "Upload failed. Please try again.",
+        },
+        { id: "upload" }
+      );
+
       clearInterval(progressInterval);
       setUploadProgress(100);
       setSuccess(true);
       setFile(null);
-      toast.success("File uploaded successfully");
+      // toast handled by toast.promise
 
       // Redirect to dashboard after 2 seconds
       setTimeout(() => {
@@ -156,7 +171,7 @@ export default function UploadFile() {
       const serverError = err?.response?.data?.error || err?.response?.data?.message;
       const errorMessage = serverError || err.message || "Upload failed. Please try again.";
       setError(errorMessage);
-      toast.error(errorMessage);
+      // toast handled by toast.promise
       if (process.env.NODE_ENV !== "production") {
         // Helpful debug info during development
         console.error("Upload failed:", err?.response?.data || err);
@@ -306,6 +321,36 @@ export default function UploadFile() {
                       <p className="text-slate-500 text-xs mt-2">Recipients must provide this password to download.</p>
                     </div>
                   )}
+                </div>
+
+                {/* Download Limits & Expiry */}
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-300 text-xs font-semibold mb-2">Max Downloads</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={maxDownloads}
+                      onChange={(e) => setMaxDownloads(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                      disabled={uploading}
+                    />
+                    <p className="text-slate-500 text-xs mt-1">1-100 downloads</p>
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 text-xs font-semibold mb-2">Expiry (hours)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="720"
+                      value={expiryHours}
+                      onChange={(e) => setExpiryHours(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                      disabled={uploading}
+                    />
+                    <p className="text-slate-500 text-xs mt-1">Up to 30 days</p>
+                  </div>
                 </div>
               </div>
             )}

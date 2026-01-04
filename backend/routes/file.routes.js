@@ -7,7 +7,9 @@ import {
   downloadFile,
   revokeFile,
   getMyFiles,
-  getFileLogs
+  getAllFiles,
+  getFileLogs,
+  deleteFile
 } from "../controllers/file.controller.js";
 
 const upload = multer();
@@ -16,7 +18,9 @@ const router = express.Router();
 router.post("/upload", auth, upload.single("file"), uploadFile);
 router.get("/download/:id", downloadFile);
 router.get("/my-files", auth, getMyFiles);
+router.get("/all-files", auth, getAllFiles);
 router.delete("/file/:id", auth, revokeFile);
+router.delete("/file/:id/permanent", auth, deleteFile);
 router.get("/file/:id/logs", auth, getFileLogs);
 
 export default router;

@@ -21,6 +21,7 @@ export default function Dashboard() {
     oneTime: boolean;
     downloadCount: number;
     revoked?: boolean;
+    owner?: { email?: string; name?: string };
   };
 
   const [files, setFiles] = useState<FileMeta[]>([]);
@@ -30,6 +31,10 @@ export default function Dashboard() {
     useState<"date" | "name" | "downloads">("date");
   const [filterOneTime, setFilterOneTime] = useState(false);
   const router = useRouter();
+
+  const userRaw =
+    typeof window !== "undefined" ? localStorage.getItem("user") : null;
+  const user = userRaw ? JSON.parse(userRaw) : null;
 
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -43,7 +48,7 @@ export default function Dashboard() {
     const fetchFiles = async () => {
       try {
         setLoading(true);
-        const res = await api.get<FileMeta[]>("/files/my-files", {
+        const res = await api.get<FileMeta[]>("/files/all-files", {
           headers: { Authorization: `Bearer ${token}` }
         });
         setFiles(res.data || []);
@@ -69,6 +74,11 @@ export default function Dashboard() {
     } catch {
       toast.error("Failed to revoke file");
     }
+  };
+
+  const handlePermanentDelete = (fileId: string) => {
+    // Backend permanent delete is already done in FileCard; just remove locally
+    setFiles((prev) => prev.filter((f) => f._id !== fileId));
   };
 
   /* ---------- SORT / FILTER ---------- */
@@ -172,13 +182,21 @@ export default function Dashboard() {
           <EmptyState />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sortedFiles.map((file) => (
-              <FileCard
-                key={file._id}
-                file={file}
-                onDelete={handleDelete}
-              />
-            ))}
+            {sortedFiles.map((file) => {
+              const ownerEmail = file.owner?.email;
+              const currentEmail = user?.email as string | undefined;
+              const isOwner = !!(ownerEmail && currentEmail && ownerEmail === currentEmail);
+
+              return (
+                <FileCard
+                  key={file._id}
+                  file={file}
+                  canManage={isOwner}
+                  onDelete={isOwner ? handleDelete : undefined}
+                  onPermanentDelete={isOwner ? handlePermanentDelete : undefined}
+                />
+              );
+            })}
           </div>
         )}
       </div>

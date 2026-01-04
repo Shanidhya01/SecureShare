@@ -11,8 +11,15 @@ import fs from "fs";
 /* UPLOAD */
 export const uploadFile = async (req, res) => {
   try {
-    const { password } = req.body;
+    const { password, maxDownloads, expiryHours } = req.body;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    // Parse and validate maxDownloads (default: 1, range: 1-100)
+    const parsedMaxDownloads = Math.min(Math.max(parseInt(maxDownloads) || 1, 1), 100);
+
+    // Parse and validate expiryHours (default: 24, range: 1-720 hours = 30 days)
+    const parsedExpiryHours = Math.min(Math.max(parseInt(expiryHours) || 24, 1), 720);
+    const expiryMs = parsedExpiryHours * 60 * 60 * 1000;
 
     if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
       return res.status(500).json({ error: "Cloudinary not configured (missing env vars)" });
@@ -57,8 +64,9 @@ export const uploadFile = async (req, res) => {
       iv: iv.toString("base64"),
       passwordHash: password ? await bcrypt.hash(password, 10) : null,
       owner: req.user.id,
-      oneTime: true,
-      expiresAt: new Date(Date.now() + 86400000)
+      oneTime: parsedMaxDownloads === 1,
+      maxDownloads: parsedMaxDownloads,
+      expiresAt: new Date(Date.now() + expiryMs)
     });
 
     res.json({ fileId: file._id });
@@ -81,11 +89,17 @@ export const downloadFile = async (req, res) => {
     if (!ok) return res.status(403).json({ error: "Wrong password" });
   }
 
-  if (file.oneTime && file.downloadCount > 0)
-    return res.status(403).json({ error: "Expired" });
+  // Check if max downloads exceeded
+  if (file.downloadCount >= file.maxDownloads) {
+    return res.status(403).json({ error: "Download limit reached" });
+  }
 
   file.downloadCount++;
-  file.logs.push({ ip: req.ip, time: new Date() });
+
+  // Log download with IP and optional user email (from query)
+  const userEmail = typeof req.query.email === "string" ? req.query.email : undefined;
+  console.log("Download log - IP:", req.ip, "| Email:", userEmail || "not provided");
+  file.logs.push({ ip: req.ip, userEmail, time: new Date() });
   await file.save();
 
   try {
@@ -148,10 +162,10 @@ export const downloadFile = async (req, res) => {
     res.on("finish", async () => {
       try {
         await cloudinary.uploader.destroy(file.cloudinaryId, { resource_type: "raw" });
-        // Keep record for history; mark as used or revoked for one-time
+        // Keep record for history; mark as revoked if max downloads reached
         const latest = await File.findById(file._id);
-        if (latest) {
-          if (latest.oneTime) latest.revoked = true; // prevent further downloads
+        if (latest && latest.downloadCount >= latest.maxDownloads) {
+          latest.revoked = true; // prevent further downloads
           await latest.save();
         }
       } catch (e) {
@@ -190,9 +204,37 @@ export const getMyFiles = async (req, res) => {
   res.json(files);
 };
 
+// Get all files (visible to any authenticated user)
+export const getAllFiles = async (req, res) => {
+  const files = await File
+    .find({})
+    .sort({ createdAt: -1 })
+    .populate("owner", "email name");
+  res.json(files);
+};
+
 /* LOGS */
 export const getFileLogs = async (req, res) => {
   const file = await File.findOne({ _id: req.params.id, owner: req.user.id });
   if (!file) return res.sendStatus(404);
   res.json(file.logs);
+};
+
+/* DELETE */
+export const deleteFile = async (req, res) => {
+  const file = await File.findOne({ _id: req.params.id, owner: req.user.id });
+  if (!file) return res.sendStatus(404);
+
+  try {
+    // Try to delete from Cloudinary (ignore if already deleted)
+    await cloudinary.uploader.destroy(file.cloudinaryId, { resource_type: "raw" });
+  } catch (e) {
+    console.error("Cloudinary delete error:", e);
+    // Continue with DB deletion even if Cloudinary fails
+  }
+
+  // Permanently delete from database
+  await File.findByIdAndDelete(req.params.id);
+
+  res.json({ message: "File deleted permanently" });
 };

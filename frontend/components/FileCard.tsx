@@ -20,23 +20,30 @@ import api from "@/lib/api";
 
 export default function FileCard({
   file,
-  onDelete
+  onDelete,
+  onPermanentDelete,
+  canManage,
 }: {
   file: {
     expiresAt: string | number | Date;
     oneTime: boolean;
+    maxDownloads?: number;
     downloadCount: number;
     _id: string;
     filename: string;
     passwordHash?: string;
     revoked?: boolean;
+    owner?: { email?: string; name?: string };
   };
   onDelete?: (fileId: string) => void;
+  onPermanentDelete?: (fileId: string) => void;
+  canManage?: boolean;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [showLink, setShowLink] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [pwdInput, setPwdInput] = useState("");
@@ -44,7 +51,9 @@ export default function FileCard({
   const expiresDate = new Date(file.expiresAt);
   const now = new Date();
   const expired = expiresDate < now;
-  const used = file.oneTime && file.downloadCount > 0;
+  const maxDownloads = file.maxDownloads || 1;
+  const limitReached = file.downloadCount >= maxDownloads;
+  const used = limitReached;
   const revoked = !!file.revoked;
 
   const timeUntilExpiry = expiresDate.getTime() - now.getTime();
@@ -56,6 +65,40 @@ export default function FileCard({
   const baseLink = `${
     process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"
   }/files/download/${file._id}`;
+
+  const getTrackedLink = (password?: string) => {
+    try {
+      const url = new URL(baseLink);
+
+      // Attach current user's email if available
+      if (typeof window !== "undefined") {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) {
+          const parsed = JSON.parse(rawUser);
+          if (parsed?.email) {
+            url.searchParams.set("email", parsed.email as string);
+            console.log("Tracking link generated with email:", parsed.email);
+          } else {
+            console.warn("User object found but no email property");
+          }
+        } else {
+          console.warn("No user object in localStorage");
+        }
+      }
+
+      if (password && password.trim()) {
+        url.searchParams.set("password", password.trim());
+      }
+
+      const finalLink = url.toString();
+      console.log("Final tracked link:", finalLink);
+      return finalLink;
+    } catch (err) {
+      console.error("Error generating tracked link:", err);
+      // Fallback: just return baseLink if URL construction fails
+      return baseLink;
+    }
+  };
 
   const getExpiryStatus = () => {
     if (revoked)
@@ -74,7 +117,7 @@ export default function FileCard({
       };
     if (used)
       return {
-        label: "Used (One-time)",
+        label: "Limit Reached",
         color: "bg-orange-500",
         textColor: "text-orange-400",
         icon: AlertCircle
@@ -103,7 +146,8 @@ export default function FileCard({
         setShowPwdModal(true);
         return;
       }
-      await navigator.clipboard.writeText(baseLink);
+      const link = getTrackedLink();
+      await navigator.clipboard.writeText(link);
       toast.success("Download link copied");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -115,7 +159,7 @@ export default function FileCard({
   const confirmCopyWithPassword = async () => {
     try {
       const pwd = pwdInput.trim();
-      const finalLink = pwd ? `${baseLink}?${new URLSearchParams({ password: pwd }).toString()}` : baseLink;
+      const finalLink = getTrackedLink(pwd);
       await navigator.clipboard.writeText(finalLink);
       toast.success("Download link copied");
       setCopied(true);
@@ -138,6 +182,23 @@ export default function FileCard({
       toast.error("Failed to revoke file");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePermanentDelete = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      await api.delete(`/files/file/${file._id}/permanent`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      toast.success("File deleted permanently");
+      if (onPermanentDelete) onPermanentDelete(file._id);
+    } catch {
+      toast.error("Failed to delete file");
+    } finally {
+      setLoading(false);
+      setShowPermanentDeleteConfirm(false);
     }
   };
 
@@ -277,7 +338,7 @@ export default function FileCard({
               <div className="bg-slate-700 rounded-lg p-3 border border-slate-600">
                 <div className="space-y-2">
                   <code className="text-xs text-slate-300 break-all">
-                    {baseLink}
+                    {getTrackedLink()}
                   </code>
                   {file.passwordHash && (
                     <p className="text-slate-400 text-xs">
@@ -298,17 +359,19 @@ export default function FileCard({
           </div>
         )}
 
-        {/* Logs */}
-        <button
-          onClick={handleViewLogs}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-lg"
-        >
-          <List size={18} />
-          View Logs
-        </button>
+        {/* Logs - only uploader can view */}
+        {canManage && (
+          <button
+            onClick={handleViewLogs}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-lg"
+          >
+            <List size={18} />
+            View Logs
+          </button>
+        )}
 
         {/* Delete */}
-        {onDelete && !(expired || used || revoked) && (
+        {canManage && onDelete && !(expired || used || revoked) && (
           <div className="pt-2 border-t border-slate-700">
             {!showDeleteConfirm ? (
               <button
@@ -325,7 +388,7 @@ export default function FileCard({
                   disabled={loading}
                   className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg"
                 >
-                  Delete
+                  Revoke
                 </button>
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
@@ -333,6 +396,41 @@ export default function FileCard({
                 >
                   Cancel
                 </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Permanent Delete - Available for all files */}
+        {canManage && onPermanentDelete && (
+          <div className={`${!(expired || used || revoked) ? '' : 'pt-2 border-t border-slate-700'}`}>
+            {!showPermanentDeleteConfirm ? (
+              <button
+                onClick={() => setShowPermanentDeleteConfirm(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-rose-900 bg-opacity-30 hover:bg-opacity-50 text-rose-300 font-semibold rounded-lg border border-rose-700"
+              >
+                <Trash2 size={18} />
+                Delete Permanently
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-rose-300 text-xs text-center font-semibold">This cannot be undone!</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handlePermanentDelete}
+                    disabled={loading}
+                    className="flex-1 px-3 py-2 bg-rose-600 text-white rounded-lg font-semibold disabled:opacity-50"
+                  >
+                    {loading ? "Deleting..." : "Delete Forever"}
+                  </button>
+                  <button
+                    onClick={() => setShowPermanentDeleteConfirm(false)}
+                    disabled={loading}
+                    className="flex-1 px-3 py-2 bg-slate-700 text-white rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </div>
