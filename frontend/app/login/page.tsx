@@ -82,7 +82,7 @@ export default function Login() {
             </div>
             <div className="relative">
               <div className="bg-white bg-opacity-20 p-3 rounded-full backdrop-blur-md">
-                <Lock size={32} className="text-white" />
+                <Lock size={32} className="text-blue-400" />
               </div>
             </div>
           </div>
@@ -177,7 +177,7 @@ export default function Login() {
             {/* Divider */}
             <div className="my-6 flex items-center gap-3">
               <div className="flex-1 h-px bg-slate-700"></div>
-              <span className="text-slate-400 text-sm">New to SecureVault?</span>
+              <span className="text-slate-400 text-sm">New to SecureShare?</span>
               <div className="flex-1 h-px bg-slate-700"></div>
             </div>
 

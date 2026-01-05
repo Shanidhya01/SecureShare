@@ -130,7 +130,7 @@ export default function Register() {
           {/* Content */}
           <div className="p-8">
             <h1 className="text-3xl font-bold text-white mb-2 text-center">Create Account</h1>
-            <p className="text-slate-400 text-center mb-8">Join SecureVault today and secure your files</p>
+            <p className="text-slate-400 text-center mb-8">Join SecureShare today and secure your files</p>
 
             {/* Success Alert */}
             {success && (
@@ -195,7 +195,7 @@ export default function Register() {
               <div>
                 <label className="block text-slate-300 font-semibold mb-2">Password</label>
                 <div className="relative">
-                  <Lock size={18} className="absolute left-3 top-3.5 text-slate-400" />
+                  <Lock size={18} className="absolute left-3 top-3.5 text-blue-400" />
                   <input
                     type={showPassword ? "text" : "password"}
                     value={form.password}
@@ -245,7 +245,7 @@ export default function Register() {
               <div>
                 <label className="block text-slate-300 font-semibold mb-2">Confirm Password</label>
                 <div className="relative">
-                  <Lock size={18} className="absolute left-3 top-3.5 text-slate-400" />
+                  <Lock size={18} className="absolute left-3 top-3.5 text-blue-400" />
                   <input
                     type={showConfirmPassword ? "text" : "password"}
                     value={form.confirmPassword}
