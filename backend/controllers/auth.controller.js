@@ -3,18 +3,55 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 export const register = async (req, res) => {
-  const hashed = await bcrypt.hash(req.body.password, 10);
-  await User.create({ ...req.body, password: hashed });
-  res.json({ message: "Registered" });
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Name, email, and password are required" });
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingUser) {
+      return res.status(409).json({ error: "An account with this email already exists" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    await User.create({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      password: hashed
+    });
+
+    res.status(201).json({ message: "Registered" });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: "An account with this email already exists" });
+    }
+
+    console.error("Register error:", err);
+    res.status(500).json({ error: err?.message || "Registration failed" });
+  }
 };
 
 export const login = async (req, res) => {
-  const user = await User.findOne({ email: req.body.email });
-  if (!user) return res.status(401).json({ error: "Invalid" });
+  try {
+    const { email, password } = req.body;
+    const normalizedEmail = typeof email === "string" ? email.toLowerCase().trim() : "";
 
-  const ok = await bcrypt.compare(req.body.password, user.password);
-  if (!ok) return res.status(401).json({ error: "Invalid" });
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
 
-  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
-  res.json({ token });
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) return res.status(401).json({ error: "Invalid" });
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ error: "Invalid" });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+    res.json({ token, user: { email: user.email, name: user.name } });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: err?.message || "Login failed" });
+  }
 };

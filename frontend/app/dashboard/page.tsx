@@ -48,13 +48,20 @@ export default function Dashboard() {
     const fetchFiles = async () => {
       try {
         setLoading(true);
-        const res = await api.get<FileMeta[]>("/files/all-files", {
+        const res = await api.get<FileMeta[]>("/files/my-files", {
           headers: { Authorization: `Bearer ${token}` }
         });
         setFiles(res.data || []);
       } catch (err: any) {
+        const status = err.response?.status;
+        if (status === 401 || status === 403) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("user");
+          router.push("/login");
+          return;
+        }
+
         setError("Failed to load files");
-        if (err.response?.status === 401) router.push("/login");
       } finally {
         setLoading(false);
       }
@@ -108,13 +115,13 @@ export default function Dashboard() {
   ).length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       <div className="max-w-6xl mx-auto px-4 py-12">
 
         {/* HEADER */}
         <div className="mb-12 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div>
-            <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
+            <h1 className="text-4xl font-black text-transparent bg-clip-text bg-linear-to-r from-blue-400 to-cyan-400">
               My Files
             </h1>
             <p className="text-slate-400">
@@ -123,7 +130,7 @@ export default function Dashboard() {
           </div>
           <a
             href="/upload"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg font-bold hover:opacity-90"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-linear-to-r from-blue-500 to-cyan-500 rounded-lg font-bold hover:opacity-90"
           >
             <Upload size={20} />
             Upload File

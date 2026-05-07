@@ -83,7 +83,10 @@ export default function Register() {
         router.push("/login");
       }, 2000);
     } catch (err: any) {
-      const errorMessage = err.response?.data?.message || "Registration failed. Please try again.";
+      const errorMessage =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        "Registration failed. Please try again.";
       setErrors({ submit: errorMessage });
     } finally {
       setLoading(false);
@@ -104,18 +107,18 @@ export default function Register() {
   const strengthColors = ["bg-red-500", "bg-orange-500", "bg-yellow-500", "bg-lime-500", "bg-green-500"];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen flex items-center justify-center px-4 py-8 register-shell">
       {/* Animated background blobs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 right-10 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: '2s' }}></div>
+        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse register-blob-delay"></div>
       </div>
 
       <div className="w-full max-w-md relative z-10">
         {/* Card */}
         <div className="bg-slate-800 bg-opacity-80 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
-          <div className="relative h-32 bg-gradient-to-r from-blue-600 to-cyan-600 flex items-center justify-center overflow-hidden">
+          <div className="relative h-32 flex items-center justify-center overflow-hidden register-header">
             <div className="absolute inset-0 opacity-20">
               <div className="absolute top-0 left-0 w-40 h-40 bg-white rounded-full mix-blend-multiply filter blur-2xl"></div>
               <div className="absolute bottom-0 right-0 w-40 h-40 bg-white rounded-full mix-blend-multiply filter blur-2xl"></div>
@@ -135,7 +138,7 @@ export default function Register() {
             {/* Success Alert */}
             {success && (
               <div className="mb-6 p-4 bg-green-500 bg-opacity-20 border border-green-500 border-opacity-50 rounded-lg flex items-start gap-3">
-                <CheckCircle size={20} className="text-green-400 flex-shrink-0 mt-0.5" />
+                <CheckCircle size={20} className="text-green-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-green-200 font-semibold text-sm">Registration successful!</p>
                   <p className="text-green-200 text-sm mt-1">Redirecting to login...</p>
@@ -146,7 +149,7 @@ export default function Register() {
             {/* Error Alert */}
             {errors.submit && (
               <div className="mb-6 p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg flex items-start gap-3">
-                <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                <AlertCircle size={20} className="text-red-400 shrink-0 mt-0.5" />
                 <p className="text-red-200 text-sm">{errors.submit}</p>
               </div>
             )}
@@ -272,7 +275,7 @@ export default function Register() {
               <button
                 onClick={register}
                 disabled={loading || success}
-                className="w-full py-3 mt-6 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-600 disabled:to-slate-600 transition-all shadow-lg hover:shadow-blue-500/50 disabled:shadow-none flex items-center justify-center gap-2"
+                className="w-full py-3 mt-6 text-white font-bold rounded-lg transition-all shadow-lg hover:shadow-blue-500/50 disabled:shadow-none flex items-center justify-center gap-2 register-button"
               >
                 {loading ? (
                   <>

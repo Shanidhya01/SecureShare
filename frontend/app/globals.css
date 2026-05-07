@@ -24,3 +24,27 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.register-blob-delay {
+  animation-delay: 2s;
+}
+
+.register-shell {
+  background: linear-gradient(135deg, #020617 0%, #1e293b 45%, #020617 100%);
+}
+
+.register-header {
+  background: linear-gradient(90deg, #2563eb 0%, #06b6d4 100%);
+}
+
+.register-button {
+  background: linear-gradient(90deg, #3b82f6 0%, #06b6d4 100%);
+}
+
+.register-button:hover {
+  background: linear-gradient(90deg, #2563eb 0%, #0891b2 100%);
+}
+
+.register-button:disabled {
+  background: linear-gradient(90deg, #475569 0%, #475569 100%);
+}
