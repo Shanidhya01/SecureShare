@@ -7,6 +7,7 @@ import { encryptBuffer } from "../utils/encrypt.js";
 import { decryptBuffer } from "../utils/decrpyt.js";
 import https from "https";
 import fs from "fs";
+import { getClientIp } from "../utils/getClientIp.js";
 
 /* UPLOAD */
 export const uploadFile = async (req, res) => {
@@ -98,8 +99,9 @@ export const downloadFile = async (req, res) => {
 
   // Log download with IP and optional user email (from query)
   const userEmail = typeof req.query.email === "string" ? req.query.email : undefined;
-  console.log("Download log - IP:", req.ip, "| Email:", userEmail || "not provided");
-  file.logs.push({ ip: req.ip, userEmail, time: new Date() });
+  const clientIp = getClientIp(req);
+  console.log("Download log - IP:", clientIp, "| Email:", userEmail || "not provided");
+  file.logs.push({ ip: clientIp, userEmail, time: new Date() });
   await file.save();
 
   try {

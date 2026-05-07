@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
+import { downloadFileWithIpTracking } from "@/lib/ipTracking";
 
 export default function FileCard({
   file,
@@ -97,6 +98,41 @@ export default function FileCard({
       console.error("Error generating tracked link:", err);
       // Fallback: just return baseLink if URL construction fails
       return baseLink;
+    }
+  };
+
+  const handleDirectDownload = async () => {
+    try {
+      setLoading(true);
+      if (file.passwordHash) {
+        setShowPwdModal(true);
+        return;
+      }
+      const userEmail = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").email : undefined;
+      await downloadFileWithIpTracking(file._id, userEmail);
+      toast.success("Download started with IP tracking");
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Download failed. Try the copy link option.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDirectDownloadWithPassword = async () => {
+    try {
+      setLoading(true);
+      const pwd = pwdInput.trim();
+      const userEmail = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").email : undefined;
+      await downloadFileWithIpTracking(file._id, userEmail, pwd);
+      toast.success("Download started with IP tracking");
+      setShowPwdModal(false);
+      setPwdInput("");
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Download failed");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -246,6 +282,13 @@ export default function FileCard({
                 Copy Link
               </button>
               <button
+                onClick={handleDirectDownloadWithPassword}
+                disabled={loading}
+                className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg disabled:opacity-50"
+              >
+                Download
+              </button>
+              <button
                 onClick={() => { setShowPwdModal(false); setPwdInput(""); }}
                 className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg"
               >
@@ -324,6 +367,14 @@ export default function FileCard({
             >
               {copied ? <Check size={18} /> : <Copy size={18} />}
               {copied ? "Copied!" : "Copy Link"}
+            </button>
+
+            <button
+              onClick={handleDirectDownload}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-lg disabled:opacity-50"
+            >
+              {loading ? <span>Downloading...</span> : <>📥 Direct Download</>}
             </button>
 
             <button
