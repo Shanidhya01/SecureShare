@@ -5,13 +5,6 @@
 
   "outputDirectory": ".next",
 
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "https://secureshare-backend.vercel.app/api/$1"
-    }
-  ],
-
   "headers": [
     {
       "source": "/(.*)",
