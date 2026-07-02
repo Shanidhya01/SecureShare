@@ -1,12 +1,35 @@
 # SecureShare 🔒
 
-A production-ready, full-stack secure file sharing application that prioritizes **privacy, security, and simplicity**. Upload files with end-to-end encryption, create time-limited or one-time download links, and maintain comprehensive audit logs—all with an intuitive user interface.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
+[![Security Phases](https://img.shields.io/badge/Security-4%20Phases%20Complete-success)](#-security-architecture-roadmap)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](#-key-features)
+
+A production-ready, full-stack secure file sharing application that prioritizes **privacy, security, and simplicity**. Upload files with true end-to-end encryption, digital signatures, Zero Trust access control, and automated malware scanning — all with an intuitive UI and comprehensive audit logs.
+
+**Documentation:** [Architecture](#-system-architecture) · [Security Model](SECURITY.md) · [Deployment Guide](DEPLOYMENT.md) · [Environment Variables](ENVIRONMENT_VARIABLES.md) · [Security Testing](SECURITY_TESTING.md) · [Changelog](CHANGELOG.md)
 
 ## 🎯 Overview
 
 SecureShare enables users to securely share files without exposing sensitive data. Files are encrypted **in the browser** before they ever leave your device, using true end-to-end, zero-knowledge encryption (AES-256-GCM + RSA-OAEP key wrapping via the Web Crypto API) — the server only ever stores ciphertext and wrapped keys, and can never read your files. Links can be password-protected, and can be set to expire or become unavailable after a certain number of downloads. Recipients receive a secure link with detailed access logs.
 
 > Files uploaded before this migration used server-side encryption (`encryptionVersion: 1`) and remain downloadable unchanged for backward compatibility — see [Zero-Knowledge Encryption Architecture](#-zero-knowledge-encryption-architecture) below.
+
+## 🗺️ Security Architecture Roadmap
+
+SecureShare's security model was built in four independent, additive phases — each one layers a new guarantee on top of the last without breaking what came before. Every phase is backward compatible: a file created in Phase 1 still works correctly after Phases 2-4 shipped.
+
+| Phase | Guarantee | Core Mechanism | Status |
+|---|---|---|---|
+| **1 — [Zero-Knowledge Encryption](#-zero-knowledge-encryption-architecture)** | Confidentiality — the server never sees plaintext | AES-256-GCM (browser) + RSA-OAEP-SHA256 key wrapping | ✅ Complete |
+| **2 — [Digital Signatures](#️-phase-2-digital-signatures--integrity-verification)** | Authenticity & integrity — prove who uploaded it and that it's unmodified | ECDSA P-256 signatures over the ciphertext, verified before decryption | ✅ Complete |
+| **3 — [Zero Trust Access Control](#️-phase-3-zero-trust-access-control)** | Access control — never trust a request just because it arrived | Device fingerprinting, revocable sessions, per-file policy engine | ✅ Complete |
+| **4 — [Malware Scanning](#-phase-4-malware-scanning--threat-detection)** | Content safety — catch malicious files before they're stored | Magic bytes, ClamAV, VirusTotal, risk classification, auto-quarantine | ✅ Complete |
+
+See [SECURITY.md](SECURITY.md) for the consolidated threat model and [CHANGELOG.md](CHANGELOG.md) for what shipped in each phase.
 
 ---
 
@@ -46,6 +69,21 @@ SecureShare enables users to securely share files without exposing sensitive dat
 
 ---
 
+## 📸 Application Screenshots
+
+> Screenshots below are placeholders — replace each `src` path with an actual image committed to a `docs/screenshots/` (or similar) directory, then remove this note.
+
+| | |
+|---|---|
+| **Login**<br/>![Login screen](docs/screenshots/login.png) | **Dashboard**<br/>![File dashboard with stats and file cards](docs/screenshots/dashboard.png) |
+| **Upload**<br/>![Upload flow: drag-and-drop, encryption progress, threat scan status](docs/screenshots/upload.png) | **Download**<br/>![Download page: signature verification, decryption progress](docs/screenshots/download.png) |
+| **Security Center**<br/>![Security Center overview: devices, sessions, events](docs/screenshots/security-center.png) | **Threat Center**<br/>![Threat Center overview: scan history, quarantine, stats](docs/screenshots/threat-center.png) |
+| **Trusted Devices**<br/>![Trusted devices list with remove action](docs/screenshots/trusted-devices.png) | **Active Sessions**<br/>![Active sessions table with revoke action](docs/screenshots/active-sessions.png) |
+| **Malware Detection**<br/>![Malware detection view showing ClamAV/VirusTotal verdicts](docs/screenshots/malware-detection.png) | **Quarantine**<br/>![Quarantined files list with release action](docs/screenshots/quarantine.png) |
+| **Security Events**<br/>![Recent security events / blocked access attempts feed](docs/screenshots/security-events.png) | **Zero Trust Dashboard**<br/>![Zero Trust policy configuration on the upload page](docs/screenshots/zero-trust-dashboard.png) |
+
+---
+
 ## 🏗️ Tech Stack
 
 ### Frontend
@@ -72,8 +110,151 @@ SecureShare enables users to securely share files without exposing sensitive dat
 
 ### DevOps & Infrastructure
 - **Containerization**: Docker & Docker Compose
-- **Database**: MongoDB (containerized)
+- **Database**: MongoDB Atlas (managed) or containerized `mongod` for local dev
 - **Cloud Storage**: Cloudinary CDN
+- **Frontend Hosting**: Vercel
+- **Backend Hosting**: Vercel (serverless functions via `backend/api/index.js`) or any Node host
+- **Malware Scanning**: ClamAV (`clamd`), typically run as a small Docker container on Render or alongside the backend
+- **Optional Threat Intel**: VirusTotal API v3
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full setup instructions for each of these.
+
+---
+
+## 🏛️ System Architecture
+
+### Overall system
+
+```mermaid
+graph TD
+    Browser["🌐 Browser<br/>Web Crypto API<br/>(all encryption/decryption/signing happens here)"]
+    Frontend["▲ Frontend<br/>Next.js (Vercel)"]
+    Backend["⚙️ Backend<br/>Express API (Vercel)"]
+    Mongo[("🍃 MongoDB Atlas<br/>metadata, keys, scans, events")]
+    Cloudinary[("☁️ Cloudinary<br/>ciphertext blob storage")]
+    ClamAV["🛡️ ClamAV Service<br/>clamd (Render / Docker)"]
+    VT["🔍 VirusTotal API<br/>optional hash lookup"]
+
+    Browser -- HTTPS --> Frontend
+    Frontend -- REST API / HTTPS --> Backend
+    Backend --> Mongo
+    Backend -- store/fetch ciphertext --> Cloudinary
+    Backend -- clamd INSTREAM protocol --> ClamAV
+    Backend -. SHA-256 lookup, optional .-> VT
+
+    classDef browser fill:#1e293b,stroke:#3b82f6,color:#fff
+    classDef server fill:#0f172a,stroke:#64748b,color:#fff
+    classDef store fill:#134e4a,stroke:#14b8a6,color:#fff
+    class Browser browser
+    class Frontend,Backend server
+    class Mongo,Cloudinary store
+```
+
+The server (Backend) is intentionally the least-trusted component in this diagram: it only ever handles ciphertext, wrapped keys, hashes, and scan verdicts — never plaintext file content (with one narrow, documented exception, see the Threat Detection Flow below) and never a raw AES key or RSA/ECDSA private key.
+
+### Encryption flow (Phase 1)
+
+```mermaid
+flowchart LR
+    A[Browser<br/>select file] --> B[Generate AES-256-GCM<br/>key + random IV]
+    B --> C[AES-256-GCM Encryption<br/>encryptFile]
+    C --> D[RSA-OAEP-SHA256<br/>Key Wrapping<br/>wrapAESKey]
+    D --> E[Upload Ciphertext<br/>POST /api/files/upload]
+    E --> F[(Cloudinary<br/>ciphertext only)]
+
+    style C fill:#134e4a,color:#fff
+    style D fill:#134e4a,color:#fff
+```
+
+The AES key never reaches the server in raw form: it's either wrapped with the owner's RSA public key (for owner re-access), embedded in the share link's URL fragment (never transmitted), or wrapped with a password-derived key — see [Zero-Knowledge Encryption Architecture](#-zero-knowledge-encryption-architecture) for the full key model.
+
+### Download flow (Phases 1-3 combined)
+
+```mermaid
+flowchart LR
+    A[Request<br/>GET /api/files/download/:id] --> B{Zero Trust<br/>Policy Engine}
+    B -->|deny| X["403 policy_denied<br/>(logged + security event)"]
+    B -->|quarantined| Q["403 quarantined<br/>(Phase 4, checked first)"]
+    B -->|allow| C{Signature<br/>Verification}
+    C -->|invalid| Y["Blocked: tampering detected<br/>(TAMPERED)"]
+    C -->|valid or unsigned| D[Unwrap AES key<br/>RSA-OAEP / password / fragment]
+    D --> E[AES-256-GCM Decryption<br/>in browser]
+    E --> F[Download<br/>Blob → file]
+
+    style B fill:#134e4a,color:#fff
+    style C fill:#134e4a,color:#fff
+    style Q fill:#7f1d1d,color:#fff
+    style X fill:#7f1d1d,color:#fff
+    style Y fill:#7f1d1d,color:#fff
+```
+
+### Threat detection flow (Phase 4)
+
+```mermaid
+flowchart TD
+    A["Upload<br/>POST /api/threats/scan<br/>(plaintext, transient - see note below)"] --> B[Magic Byte Validation<br/>detect real file type]
+    B --> C[Hash Generation<br/>SHA-256 / SHA-1 / MD5]
+    C --> D[ClamAV Scan<br/>clamd INSTREAM protocol]
+    D --> E{VirusTotal API<br/>key configured?}
+    E -->|yes| F[VirusTotal Lookup<br/>by SHA-256]
+    E -->|no| G[Skipped]
+    F --> H[Risk Classification<br/>Low / Medium / High / Critical]
+    G --> H
+    H --> I{Risk level ≥ High?}
+    I -->|yes| J["🚫 Quarantine<br/>blocks all future downloads"]
+    I -->|no| K["✅ Proceed to client-side<br/>encryption + upload"]
+
+    style D fill:#134e4a,color:#fff
+    style F fill:#134e4a,color:#fff
+    style H fill:#78350f,color:#fff
+    style J fill:#7f1d1d,color:#fff
+    style K fill:#14532d,color:#fff
+```
+
+> **Note on plaintext exposure**: this scan step is the *one deliberate, narrowly-scoped exception* to SecureShare's zero-knowledge promise — the browser sends plaintext here, before any encryption, purely to be scanned. The buffer lives in memory only for this single request, is never written to disk or logged, and is discarded the moment the request completes. See [Phase 4](#-phase-4-malware-scanning--threat-detection) for the full reasoning.
+
+### Zero Trust flow (Phase 3)
+
+```mermaid
+flowchart TD
+    A[Login] --> B[Compute device fingerprint<br/>SHA-256 hash, client-side only]
+    B --> C[Device recorded &amp; trusted<br/>bootstrapped by password auth]
+    C --> D[JWT issued with session id]
+    D --> E[Every request:<br/>verify JWT + session not revoked]
+    E --> F[Download request]
+    F --> G{File has an<br/>access policy?}
+    G -->|no| H[✅ Allow<br/>unconditionally]
+    G -->|yes| I["Evaluate: country / IP / device /<br/>business hours / device cap / approval"]
+    I -->|pass| H
+    I -->|fail| J[❌ Deny<br/>logged + security event]
+
+    style C fill:#134e4a,color:#fff
+    style H fill:#14532d,color:#fff
+    style J fill:#7f1d1d,color:#fff
+```
+
+### Digital signature flow (Phase 2)
+
+```mermaid
+flowchart TB
+    subgraph Upload["Upload (browser)"]
+        A1[Encrypt file<br/>AES-256-GCM] --> A2[Compute ciphertext]
+        A2 --> A3["Sign ciphertext<br/>ECDSA P-256 + SHA-256<br/>(signEncryptedFile)"]
+        A3 --> A4[Upload signature +<br/>ciphertext + metadata]
+    end
+    subgraph Download["Download (browser)"]
+        B1[Fetch ciphertext + signature +<br/>owner's public signing key] --> B2["Verify signature<br/>crypto.subtle.verify (ECDSA)"]
+        B2 -->|valid| B3[✅ Proceed to decrypt]
+        B2 -->|invalid| B4[🚫 Block: tampering detected]
+        B2 -->|no signature present| B5[ℹ️ Unsigned - legacy file,<br/>proceed unblocked]
+    end
+    Upload --> Download
+
+    style A3 fill:#134e4a,color:#fff
+    style B2 fill:#134e4a,color:#fff
+    style B4 fill:#7f1d1d,color:#fff
+    style B3 fill:#14532d,color:#fff
+```
 
 ---
 
@@ -1087,47 +1268,6 @@ Planned features and improvements:
 
 ---
 
-**Last Updated**: May 2026
-**Version**: 1.0.0
+**Last Updated**: July 2026
+**Version**: 4.0.0 (Phase 4 — Malware Scanning & Threat Detection)
 **Status**: Production Ready ✅
-```
-
-- Frontend dev server: http://localhost:3000
-- Backend API: http://localhost:5000 (endpoints under `/api`)
-
-### 2) Run with Docker Compose
-```bash
-cd SecureShare
-docker compose up --build
-```
-- API: http://localhost:5000
-- MongoDB: mongodb://localhost:27017
-
-## Core API Endpoints
-- `POST /api/auth/register` — create account
-- `POST /api/auth/login` — sign in (returns JWT)
-- `POST /api/files/upload` — upload file (Auth required; multipart/form-data, field `file`)
-- `GET /api/files/my-files` — list your files (Auth required)
-- `GET /api/files/download/:id` — download link
-
-## Frontend Notes
-- Toasts are integrated globally via `Toaster` (top-right). Actions like login, register, upload, link copy, and logout show feedback.
-- Set `NEXT_PUBLIC_API` so Axios requests reach your API (example: `http://localhost:5000/api`).
-
-## Scripts
-
-Backend:
-- `npm run dev` — start API with Nodemon
-- `npm start` — start API with Node
-
-Frontend:
-- `npm run dev` — start Next dev server
-- `npm run build` — production build
-- `npm start` — start production server
-
-## Security & Cleanup
-- Rate limiting protects the public API from abuse
-- A scheduled cleanup job removes expired items
-
-## License
-This project is for educational/demo purposes.
