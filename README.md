@@ -15,9 +15,12 @@ SecureShare enables users to securely share files without exposing sensitive dat
 ### Security
 - **True Client-Side End-to-End Encryption**: files are encrypted in the browser with AES-256-GCM before upload; the AES key is wrapped with RSA-OAEP-SHA256 (per-user keypair, 3072-bit). The server never sees plaintext files or raw keys — a genuine zero-knowledge architecture.
 - **Password Protection**: Optional password protection; for E2E files the password derives the unwrapping key entirely client-side (PBKDF2-SHA256) and is never sent to the server
-- **Audit Logging**: Track all file downloads with IP addresses, email, and timestamps
+- **Digital Signatures** (Phase 2): every upload is signed with a per-user ECDSA P-256 key; downloads verify the signature before decrypting, blocking tampered files outright
+- **Zero Trust Access Policies** (Phase 3): optional per-file country/IP/device allowlists, business-hours windows, device caps, and approval requirements, plus device fingerprinting and revocable sessions
+- **Malware Scanning & Quarantine** (Phase 4): every new upload is scanned pre-encryption (magic bytes, ClamAV, VirusTotal, MIME-mismatch/macro/archive heuristics) and automatically quarantined if flagged High/Critical risk
+- **Audit Logging**: Track all file downloads with IP, device, browser, country, policy decision, and scan result
 - **Automatic Expiration**: Files automatically delete after expiry time
-- **JWT Authentication**: Secure token-based user authentication
+- **JWT Authentication**: Secure token-based user authentication with revocable sessions
 - **Rate Limiting**: API rate limiting to prevent abuse (25 requests per 15 minutes)
 
 ### File Management
@@ -87,6 +90,7 @@ SecureShare/
 │   │   ├── upload/               # File upload page
 │   │   ├── dashboard/            # User dashboard
 │   │   ├── security/             # Phase 3: Security Center (devices, sessions, events)
+│   │   ├── threats/              # Phase 4: Threat Center (scans, quarantine, malware detections)
 │   │   └── file/[id]/            # File detail & download
 │   ├── components/               # Reusable React components
 │   │   ├── Navbar.tsx
@@ -98,6 +102,8 @@ SecureShare/
 │   ├── lib/                      # Utilities & API client
 │   │   ├── api.js
 │   │   ├── ipTracking.ts
+│   │   ├── security/
+│   │   │   └── fingerprint.ts     # Phase 3: privacy-minimal device fingerprint hash (getDeviceId)
 │   │   └── crypto/                # Zero-knowledge crypto module (Web Crypto API only, no crypto-js)
 │   │       ├── cryptoHelpers.ts   # Public entry point - re-exports everything below
 │   │       ├── base64.ts          # base64 / base64url encode-decode helpers
@@ -118,19 +124,41 @@ SecureShare/
 │   ├── controllers/              # Business logic
 │   │   ├── auth.controller.js
 │   │   ├── user.controller.js
+│   │   ├── device.controller.js   # Phase 3: trusted device list/removal
+│   │   ├── session.controller.js  # Phase 3: active session list/revocation
+│   │   ├── security.controller.js # Phase 3: unified security-event feed
+│   │   ├── threat.controller.js   # Phase 4: pre-encryption scan, scan history, quarantine
 │   │   └── file.controller.js
 │   ├── models/                   # Mongoose schemas
 │   │   ├── User.js
+│   │   ├── Device.js              # Phase 3
+│   │   ├── Session.js             # Phase 3
+│   │   ├── SecurityEvent.js       # Phase 3 (extended in Phase 4 with file_quarantined)
+│   │   ├── ThreatScan.js          # Phase 4
 │   │   └── File.js
 │   ├── routes/                   # API endpoints
 │   │   ├── auth.routes.js
 │   │   ├── user.routes.js
+│   │   ├── device.routes.js       # Phase 3
+│   │   ├── session.routes.js      # Phase 3
+│   │   ├── security.routes.js     # Phase 3
+│   │   ├── threat.routes.js       # Phase 4
 │   │   └── file.routes.js
 │   ├── middleware/               # Custom middleware
-│   │   ├── auth.middleware.js
+│   │   ├── auth.middleware.js     # Phase 3: also checks session revocation
 │   │   └── rateLimit.js
+│   ├── services/                 # Pure/orchestration logic, no Express coupling
+│   │   ├── policyEngine.js        # Phase 3: Zero Trust download policy evaluation
+│   │   ├── riskEngine.js          # Phase 4: classifyRisk() / shouldQuarantine()
+│   │   ├── threatScanService.js   # Phase 4: orchestrates the full scan pipeline
+│   │   ├── clamavScanner.js       # Phase 4: clamd INSTREAM protocol client
+│   │   └── virusTotalLookup.js    # Phase 4: optional VirusTotal hash lookup
 │   ├── utils/                    # Helper functions
 │   │   ├── cloudinary.js
+│   │   ├── deviceContext.js       # Phase 3: dependency-free User-Agent parsing
+│   │   ├── geoLookup.js           # Phase 3: best-effort country resolution from proxy headers
+│   │   ├── magicBytes.js          # Phase 4: file-type detection by signature bytes
+│   │   ├── fileHashes.js          # Phase 4: SHA-256/SHA-1/MD5 hashing
 │   │   └── legacy/                # encryptionVersion 1 only — server-side AES-CBC (unused by new uploads)
 │   │       ├── encrypt.js
 │   │       └── decrpyt.js
@@ -319,6 +347,71 @@ Every Phase 3 addition is additive to the existing schema and strictly opt-in at
 
 ---
 
+## 🦠 Phase 4: Malware Scanning & Threat Detection
+
+Phases 1-3 protect confidentiality, authenticity, and access — but none of them ask "is this file's *content* actually safe?" Phase 4 adds that layer: every new upload is scanned for malware and suspicious characteristics before it's ever stored, with automatic quarantine for anything dangerous.
+
+### The zero-knowledge conflict, and how it's resolved
+
+SecureShare's server never sees plaintext file bytes (Phase 1) — but malware scanning (magic-byte inspection, ClamAV, VirusTotal, MIME-mismatch detection) is fundamentally meaningless against ciphertext: encrypted data is high-entropy noise that doesn't match any signature and whose hash won't match any known-malware hash, regardless of what the underlying plaintext actually is. There is no way to reconcile "the server never sees plaintext" with "the server can meaningfully scan file content" — one of those has to give, even slightly.
+
+SecureShare resolves this with a **deliberate, narrowly-scoped exception**: `POST /api/threats/scan` is the *one* endpoint where the browser sends plaintext file bytes to the server, and it does so **before** any client-side encryption happens, purely to be scanned. The buffer:
+- exists only in memory for the duration of that single request (Multer's in-memory storage, never written to disk),
+- is never logged, and
+- goes out of scope (eligible for garbage collection) the moment the request handler returns.
+
+Only the *scan verdict* (hashes, risk level, detected threat names, MIME info) is persisted, as a `ThreatScan` document — never the file content itself. The browser only proceeds to actually encrypt-and-upload the file (Phase 1's flow, unchanged) after this scan completes and clears; the resulting encrypted upload is still fully zero-knowledge from that point on. This is the same trade-off most real products that need both E2E encryption and malware scanning make - see [Threat model](#threat-model) in the Phase 1 section for the analogous reasoning about transient plaintext exposure windows.
+
+The legacy `encryptionVersion: 1` upload path scans inline instead, with no separate request needed - it already receives plaintext server-side as part of its (non-zero-knowledge) design, so there's no additional exposure to reason about there.
+
+### Scan pipeline
+
+For every scanned file, `backend/services/threatScanService.js` runs, in parallel where possible:
+
+1. **Magic-byte type detection** (`backend/utils/magicBytes.js`) — inspects the file's actual signature bytes (dependency-free, no external library) to determine its real type, independent of whatever filename/extension/MIME type the upload claims. Catches PDFs, images, archives, and — critically — executables (Windows PE `MZ`, Linux ELF).
+2. **MIME-mismatch detection** — flags when the claimed type (from the browser) and the detected type (from magic bytes) disagree on something concrete (a generic/empty claimed type isn't itself suspicious, so it's never flagged).
+3. **Hashing** (`backend/utils/fileHashes.js`) — SHA-256, SHA-1, and MD5 of the plaintext. SHA-256 is the one used for VirusTotal lookups and treated as the primary identity hash; MD5/SHA-1 are included only for interoperability with tooling that still keys on them.
+4. **ClamAV scan** (`backend/services/clamavScanner.js`) — talks directly to a `clamd` daemon over its `INSTREAM` TCP protocol (no external npm wrapper), streaming the buffer in chunks. If `clamd` isn't reachable (not installed/running — the common case in a plain dev environment), the scan degrades gracefully to `status: "unavailable"` rather than failing the whole pipeline. Configure via `CLAMAV_HOST`/`CLAMAV_PORT` (default `127.0.0.1:3310`).
+5. **VirusTotal lookup** (`backend/services/virusTotalLookup.js`, optional) — looks up the file's SHA-256 against VirusTotal's existing database (VT API v3) — it does *not* upload the file itself, keeping the "never transmit more plaintext-derived data than necessary" principle intact. Entirely skipped if `VIRUSTOTAL_API_KEY` isn't set.
+6. **Extension/archive heuristics** — checks the claimed extension against a configurable dangerous-extension list (`.exe`, `.scr`, `.vbs`, `.ps1`, ...) and a macro-enabled Office extension list (`.docm`, `.xlsm`, ...), and inspects ZIP local file headers directly for the encryption bit (flags password-protected/encrypted archives, a common malware-delivery technique for evading content scanners).
+
+### Risk engine
+
+`backend/services/riskEngine.js` is a **pure, configurable function** (`classifyRisk`) that combines every signal above into one of four levels:
+
+| Level | Triggered by |
+|---|---|
+| **Critical** | Confirmed malware (ClamAV or VirusTotal), OR a disguised executable (magic bytes say "binary," claimed type says otherwise — the mismatch *is* the attack), OR a dangerous extension combined with macros/encryption/mismatch |
+| **High** | A dangerous extension or executable content on its own, macros combined with a MIME mismatch, or a VirusTotal "suspicious" (but below the confirmed-malicious threshold) verdict |
+| **Medium** | Macros alone, an encrypted/password-protected archive, or a MIME mismatch alone |
+| **Low** | None of the above |
+
+`shouldQuarantine(riskLevel)` returns `true` for High and Critical - the dangerous-extensions list, macro-extensions list, and detected-executable-MIME-types list all live in one exported `RISK_CONFIG` object, so the rule set can be tuned (or a signal added) without touching any call site.
+
+### Quarantine
+
+A file whose scan resolves to High/Critical risk is marked `quarantined: true` on both its `ThreatScan` and (once the actual encrypted upload completes) its `File` document. `downloadFile` in `file.controller.js` checks this **before** anything else — before the Zero Trust policy engine, before any decryption — and unconditionally refuses to serve a single byte, logging the attempt and emitting a `file_quarantined` security event. There is no policy override that can un-block a quarantined file except the owner explicitly releasing it from the Threat Center (`POST /api/threats/quarantine/:id/release`) - a deliberate manual step for handling false positives, since ClamAV/magic-byte heuristics aren't infallible.
+
+The upload itself is **not** hard-blocked server-side by a quarantine verdict (the API still accepts it, so it has something to quarantine and display) - the upload page's own UI refuses to proceed past a Critical/High scan result client-side, as a fail-fast UX measure, but the real security boundary is the download-time block, which holds even if that client-side gate is bypassed.
+
+### Threat Center
+
+`frontend/app/threats/page.tsx` (linked from the navbar) gives users:
+- **Scan History** — every scan they've triggered, with filename, size, SHA-256, ClamAV/VirusTotal verdicts, and risk level
+- **Quarantined Files** — files blocked from download, with a "Release" action for manual override
+- **Malware Detections** — scans where ClamAV or VirusTotal actually confirmed a threat, with the detected names
+- **Threat Statistics** — total scans, quarantine count, risk-level breakdown, malware-detection count
+
+### Extended audit logs
+
+`File.logs[]` entries (already extended in Phase 3 with device/policy context) now also snapshot `scanStatus` and `riskLevel` at download time, and a quarantine block produces its own `decision: "deny"` log entry with `denialReason: "File is quarantined due to a threat scan detection"` — consistent with how policy denials are already logged.
+
+### Backward compatibility
+
+`File.scanStatus` defaults to `"not_scanned"` and `quarantined` defaults to `false` — every file uploaded before Phase 4 is completely unaffected and remains downloadable exactly as before. New `encryptionVersion: 2` uploads are required to reference a completed scan (`scanId`, obtained from `POST /api/threats/scan`) going forward, so the protection is mandatory for anything created from here on, without touching anything that already exists.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -417,6 +510,9 @@ docker-compose down
 | `RSA_PUBLIC_KEY_BASE64` | Base64 RSA public key | (auto-generated) |
 | `RSA_PRIVATE_KEY_BASE64` | Base64 RSA private key | (auto-generated) |
 | `NODE_ENV` | Environment mode | `development` or `production` |
+| `CLAMAV_HOST` | Hostname of a running `clamd` daemon (Phase 4). Optional - scans degrade to `"unavailable"` if unset/unreachable | `127.0.0.1` |
+| `CLAMAV_PORT` | Port `clamd` is listening on (Phase 4) | `3310` |
+| `VIRUSTOTAL_API_KEY` | VirusTotal API v3 key (Phase 4). Optional - hash lookups are skipped entirely if unset | (none by default) |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -469,7 +565,7 @@ docker-compose down
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---|
-| `POST` | `/upload` | Upload file (client-side pre-encrypted for `encryptionVersion=2`) | Yes |
+| `POST` | `/upload` | Upload file (client-side pre-encrypted for `encryptionVersion=2`; requires a `scanId` from `POST /api/threats/scan`, Phase 4) | Yes |
 | `GET` | `/my-files` | Get user's uploaded files | Yes |
 | `GET` | `/file/:id/meta` | Get encryption metadata (IV, wrapped keys, filename) without file bytes | No |
 | `GET` | `/download/:fileId` | Download file bytes (decrypted server-side for v1, raw ciphertext for v2) | No |
@@ -505,7 +601,17 @@ docker-compose down
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---|
-| `GET` | `/events` | Recent security events (new devices, revocations, blocked downloads) | Yes |
+| `GET` | `/events` | Recent security events (new devices, revocations, blocked downloads, quarantines) | Yes |
+
+### Threat Routes (`/api/threats`, Phase 4)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `POST` | `/scan` | Scan a plaintext file for malware/threats before encryption - the one endpoint that receives plaintext (see [Phase 4](#-phase-4-malware-scanning--threat-detection)); returns a `scanId` to reference from `POST /api/files/upload` | Yes |
+| `GET` | `/scans` | Your scan history, newest first | Yes |
+| `GET` | `/quarantined` | Files of yours currently quarantined | Yes |
+| `GET` | `/stats` | Aggregate threat statistics (total scans, risk breakdown, malware detections) | Yes |
+| `POST` | `/quarantine/:id/release` | Manually release a file from quarantine (owner override, e.g. for a false positive) | Yes |
 
 **Upload Request:**
 ```json
@@ -698,6 +804,13 @@ docker run -p 3000:3000 secureshare-frontend
   revoked: Boolean,
   expiresAt: Date,
 
+  // Phase 4: malware/threat scan result, mirrored from the ThreatScan doc referenced by scanId.
+  // Defaults keep every pre-Phase-4 file unaffected: scanStatus "not_scanned", quarantined false.
+  scanId: ObjectId (ref: ThreatScan),
+  scanStatus: String,   // "not_scanned" | "pending" | "completed" | "failed"
+  riskLevel: String,    // "Low" | "Medium" | "High" | "Critical" | null
+  quarantined: Boolean, // true blocks all downloads unconditionally, see downloadFile()
+
   // Phase 3: Zero Trust access policy. All fields optional/empty by default - a file with no
   // policy configured is unaffected (see backend/services/policyEngine.js).
   policy: {
@@ -713,8 +826,8 @@ docker run -p 3000:3000 secureshare-frontend
     requireApproval: Boolean     // require an authenticated, trusted-device recipient
   },
 
-  // Download logs - extended in Phase 3 with device/policy context, populated for both
-  // allowed and denied attempts (decision/denialReason distinguish them).
+  // Download logs - extended in Phase 3 with device/policy context and in Phase 4 with a scan
+  // snapshot, populated for both allowed and denied attempts (decision/denialReason distinguish them).
   logs: [
     {
       ip: String,
@@ -725,7 +838,9 @@ docker run -p 3000:3000 secureshare-frontend
       operatingSystem: String,
       country: String,
       decision: String,      // "allow" | "deny"
-      denialReason: String   // present only when decision === "deny"
+      denialReason: String,  // present only when decision === "deny"
+      scanStatus: String,    // Phase 4 snapshot at download time
+      riskLevel: String      // Phase 4 snapshot at download time
     }
   ],
   createdAt: Timestamp,
@@ -770,19 +885,65 @@ docker run -p 3000:3000 secureshare-frontend
 }
 ```
 
-### SecurityEvent Collection (Phase 3)
+### SecurityEvent Collection (Phase 3, extended in Phase 4)
 ```javascript
 {
   _id: ObjectId,
   owner: ObjectId (ref: User),
-  type: String,   // "new_device" | "device_removed" | "session_revoked" | "download_denied"
+  type: String,   // "new_device" | "device_removed" | "session_revoked" | "download_denied" | "file_quarantined"
   message: String,
-  file: ObjectId (ref: File),   // present for download_denied events
+  file: ObjectId (ref: File),   // present for download_denied / file_quarantined events
   filename: String,
   deviceId: String,
   ip: String,
   country: String,
   createdAt: Date
+}
+```
+
+### ThreatScan Collection (Phase 4)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+  fileId: ObjectId (ref: File),   // null until the scan is consumed by an actual upload
+  originalFilename: String,
+  fileSizeBytes: Number,
+
+  claimedMimeType: String,        // what the browser claimed (File.type)
+  detectedMimeType: String,       // what magic-byte inspection actually found
+  mimeMismatch: Boolean,
+  extension: String,
+  dangerousExtension: Boolean,      // claimed filename ends in a dangerous extension
+  dangerousDetectedType: Boolean,   // magic-byte content IS executable, regardless of claimed name
+  hasMacros: Boolean,
+  isEncryptedArchive: Boolean,
+  magicBytesHex: String,          // first bytes of the file, hex-encoded, for display/audit only
+
+  hashes: { sha256: String, sha1: String, md5: String },
+
+  clamav: {
+    status: String,        // "clean" | "infected" | "error" | "unavailable"
+    engineVersion: String,
+    scannedAt: Date,
+    threatNames: [String]
+  },
+  virusTotal: {
+    status: String,        // "skipped" | "clean" | "suspicious" | "malicious" | "unknown" | "error"
+    maliciousCount: Number,
+    suspiciousCount: Number,
+    totalEngines: Number,
+    threatNames: [String],
+    checkedAt: Date
+  },
+
+  riskLevel: String,       // "Low" | "Medium" | "High" | "Critical"
+  quarantined: Boolean,
+  scanStatus: String,      // "pending" | "completed" | "failed"
+  consumedByUpload: Boolean, // prevents a single scan result from backing more than one upload
+
+  createdAt: Timestamp,
+  updatedAt: Timestamp
 }
 ```
 

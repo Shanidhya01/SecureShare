@@ -41,6 +41,14 @@ const fileSchema = new mongoose.Schema({
   expiresAt: Date,
   downloadCount: { type: Number, default: 0 },
 
+  // Phase 4: malware/threat scan result, mirrored from the ThreatScan doc referenced by scanId
+  // at upload time. Absent/"not_scanned" on every file uploaded before Phase 4 - those remain
+  // downloadable exactly as before (quarantined defaults to false, never blocks them).
+  scanId: { type: mongoose.Schema.Types.ObjectId, ref: "ThreatScan", default: null },
+  scanStatus: { type: String, enum: ["not_scanned", "pending", "completed", "failed"], default: "not_scanned" },
+  riskLevel: { type: String, enum: ["Low", "Medium", "High", "Critical"], default: null },
+  quarantined: { type: Boolean, default: false },
+
   // Phase 3: Zero Trust access policy. Every field is optional/empty by default, so files with
   // no policy configured behave exactly as before (backend/services/policyEngine.js treats an
   // all-empty policy as "no restrictions, allow"). Evaluated on every download attempt.
@@ -57,7 +65,8 @@ const fileSchema = new mongoose.Schema({
     requireApproval: { type: Boolean, default: false } // require an authenticated, trusted-device recipient
   },
 
-  // Download logs: who, from where, and when - extended in Phase 3 with device/policy context.
+  // Download logs: who, from where, and when - extended in Phase 3 with device/policy context,
+  // and in Phase 4 with a snapshot of the file's scan result at download time.
   // Populated for both allowed and denied attempts (decision/denialReason distinguish them).
   logs: [{
     ip: String,
@@ -68,7 +77,9 @@ const fileSchema = new mongoose.Schema({
     operatingSystem: String,
     country: String,
     decision: { type: String, enum: ["allow", "deny"] },
-    denialReason: String
+    denialReason: String,
+    scanStatus: String,
+    riskLevel: String
   }]
 }, { timestamps: true });
 

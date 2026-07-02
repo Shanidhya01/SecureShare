@@ -16,7 +16,7 @@ import {
   importSigningPublicKey,
   verifyEncryptedFileSignature,
 } from "@/lib/crypto/cryptoHelpers";
-import { AlertCircle, Lock, Download, Loader, ShieldCheck, ShieldAlert, ShieldQuestion, Clock, Ban } from "lucide-react";
+import { AlertCircle, Lock, Download, Loader, ShieldCheck, ShieldAlert, ShieldQuestion, Clock, Ban, Bug } from "lucide-react";
 import toast from "react-hot-toast";
 import { getDeviceId } from "@/lib/security/fingerprint";
 
@@ -47,6 +47,11 @@ type FileMeta = {
   // Phase 3: whether this file has any Zero Trust access policy configured (never exposes the
   // actual rules to an anonymous requester - just whether extra checks will be evaluated).
   hasPolicy?: boolean;
+  // Phase 4: threat scan verdict. quarantined blocks download entirely (see downloadFile in
+  // file.controller.js) - shown here so the UI never even offers a download button for it.
+  scanStatus?: string;
+  riskLevel?: string | null;
+  quarantined?: boolean;
 };
 
 type SignatureStatus = "idle" | "verifying" | "verified" | "unsigned" | "failed";
@@ -133,6 +138,7 @@ export default function FileDownloadPage() {
       if (body?.error === "revoked") throw new Error("REVOKED");
       if (body?.error === "expired") throw new Error("EXPIRED");
       if (body?.error === "policy_denied") throw new Error(`POLICY_DENIED:${body.reason || "Access denied by security policy"}`);
+      if (body?.error === "quarantined") throw new Error(`QUARANTINED:${body.riskLevel || ""}`);
       throw new Error("NETWORK");
     }
     return res.arrayBuffer();
@@ -150,6 +156,9 @@ export default function FileDownloadPage() {
     if (message === "NETWORK") return "Network error while fetching the encrypted file. Please try again.";
     if (message.startsWith("POLICY_DENIED:")) {
       return `🔒 Access denied by security policy: ${message.slice("POLICY_DENIED:".length)}`;
+    }
+    if (message.startsWith("QUARANTINED:")) {
+      return `🐛 This file is quarantined (${message.slice("QUARANTINED:".length) || "flagged"} risk) and cannot be downloaded.`;
     }
     if (message === "TAMPERED") {
       return "⚠ Signature verification failed - this file may have been tampered with. Download blocked for your safety.";
@@ -315,7 +324,18 @@ export default function FileDownloadPage() {
                   </p>
                 )}
 
-                {meta.limitReached ? (
+                {meta.quarantined ? (
+                  <div className="p-4 bg-red-600 bg-opacity-30 border border-red-500 rounded-lg flex items-start gap-3">
+                    <Bug size={20} className="text-red-300 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-red-100 text-sm font-semibold">This file is quarantined</p>
+                      <p className="text-red-200 text-xs mt-1">
+                        SecureShare's threat scanner flagged this upload as {meta.riskLevel || "high"} risk. Download has
+                        been disabled to protect you. Contact the file's owner if you believe this is a mistake.
+                      </p>
+                    </div>
+                  </div>
+                ) : meta.limitReached ? (
                   <div className="p-4 bg-orange-500 bg-opacity-20 border border-orange-500 border-opacity-50 rounded-lg text-center">
                     <p className="text-orange-200 text-sm font-semibold">Download limit reached</p>
                   </div>
@@ -326,7 +346,7 @@ export default function FileDownloadPage() {
                   </div>
                 ) : null}
 
-                {!meta.limitReached && meta.encryptionVersion === 1 && (
+                {!meta.quarantined && !meta.limitReached && meta.encryptionVersion === 1 && (
                   <div className="space-y-4">
                     {meta.hasPassword && (
                       <div className="relative">
@@ -351,7 +371,7 @@ export default function FileDownloadPage() {
                   </div>
                 )}
 
-                {!meta.limitReached && meta.encryptionVersion === 2 && (
+                {!meta.quarantined && !meta.limitReached && meta.encryptionVersion === 2 && (
                   <div className="space-y-4">
                     {decrypting && (
                       <p className="text-center text-blue-300 text-sm">

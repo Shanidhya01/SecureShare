@@ -27,3 +27,5 @@ dist/
 
 public.pem
 private.pem
+
+.claude/

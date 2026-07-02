@@ -7,6 +7,7 @@ import File from "../models/File.js";
 import User from "../models/User.js";
 import Device from "../models/Device.js";
 import SecurityEvent from "../models/SecurityEvent.js";
+import ThreatScan from "../models/ThreatScan.js";
 import { encryptBuffer } from "../utils/legacy/encrypt.js";
 import { decryptBuffer } from "../utils/legacy/decrpyt.js";
 import https from "https";
@@ -15,6 +16,16 @@ import { getClientIp } from "../utils/getClientIp.js";
 import { parseUserAgent } from "../utils/deviceContext.js";
 import { resolveCountry } from "../utils/geoLookup.js";
 import { evaluateDownloadPolicy, hasActivePolicy } from "../services/policyEngine.js";
+import { runThreatScan } from "../services/threatScanService.js";
+
+/* Phase 4: links a completed ThreatScan doc to the File it was ultimately used for, marking it
+   consumed so the same clean scan result can't be replayed across multiple uploads. Returns the
+   {scanStatus, riskLevel, quarantined} to mirror onto the File doc itself (requirement 7) - kept
+   denormalized there so downloadFile's quarantine check never needs a second query/populate. */
+const linkThreatScan = async (scanId, fileId) => {
+  const scan = await ThreatScan.findByIdAndUpdate(scanId, { fileId, consumedByUpload: true }, { new: true });
+  return scan;
+};
 
 /* Parses/sanitizes the optional Phase 3 access-policy JSON string sent with an upload into the
    File.policy subdocument shape. Returns undefined if no meaningful policy was provided, so
@@ -98,6 +109,14 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     }
   }
 
+  // Phase 4: the legacy v1 flow already receives plaintext server-side (that's the whole point
+  // of v1's server-side encryption), so it can run a genuine, meaningful malware scan inline -
+  // no separate pre-encryption round trip needed like v2's zero-knowledge flow requires.
+  const scanResult = await runThreatScan(req.file.buffer, {
+    originalFilename: req.file.originalname,
+    claimedMimeType: req.file.mimetype
+  });
+
   const { encrypted, aesKey, iv } = encryptBuffer(req.file.buffer);
 
   const encryptedKey = crypto.publicEncrypt(
@@ -124,8 +143,25 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     oneTime: parsedMaxDownloads === 1,
     maxDownloads: parsedMaxDownloads,
     expiresAt: new Date(Date.now() + expiryMs),
+    scanStatus: scanResult.scanStatus,
+    riskLevel: scanResult.riskLevel,
+    quarantined: scanResult.quarantined,
     policy
   });
+
+  const scan = await ThreatScan.create({ owner: req.user.id, fileId: file._id, consumedByUpload: true, ...scanResult });
+  file.scanId = scan._id;
+  await file.save();
+
+  if (scan.quarantined) {
+    SecurityEvent.create({
+      owner: req.user.id,
+      type: "file_quarantined",
+      message: `Upload quarantined: ${scan.riskLevel} risk`,
+      file: file._id,
+      filename: file.filename
+    }).catch((e) => console.error("Failed to record security event:", e));
+  }
 
   res.json({ fileId: file._id });
 };
@@ -147,7 +183,8 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     fileHash,
     hashAlgorithm,
     signatureAlgorithm,
-    signedAt
+    signedAt,
+    scanId
   } = req.body;
 
   if (!iv || !wrappedOwnerKey) {
@@ -165,6 +202,21 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   const hasSignatureFields = signature || fileHash || hashAlgorithm || signatureAlgorithm;
   if (hasSignatureFields && !(signature && fileHash && hashAlgorithm && signatureAlgorithm)) {
     return res.status(400).json({ error: "Incomplete signature metadata" });
+  }
+
+  // Phase 4: every new upload must reference a completed pre-encryption scan (POST /api/threats/
+  // scan) - this is what makes malware scanning possible at all in a zero-knowledge system (see
+  // threatScanService.js). Not required for encryptionVersion 1, which scans inline instead since
+  // it already has plaintext server-side. A scan can only back a single upload (replay protection).
+  if (!scanId) {
+    return res.status(400).json({ error: "Missing scanId - scan the file with POST /api/threats/scan before uploading" });
+  }
+  const scan = await ThreatScan.findById(scanId);
+  if (!scan || String(scan.owner) !== String(req.user.id)) {
+    return res.status(400).json({ error: "Invalid scanId" });
+  }
+  if (scan.consumedByUpload) {
+    return res.status(400).json({ error: "This scan result has already been used for another upload" });
   }
 
   const owner = await User.findById(req.user.id).select("publicKey");
@@ -202,8 +254,24 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     oneTime: parsedMaxDownloads === 1,
     maxDownloads: parsedMaxDownloads,
     expiresAt: new Date(Date.now() + expiryMs),
+    scanId: scan._id,
+    scanStatus: scan.scanStatus,
+    riskLevel: scan.riskLevel,
+    quarantined: scan.quarantined,
     policy
   });
+
+  await linkThreatScan(scan._id, file._id);
+
+  if (scan.quarantined) {
+    SecurityEvent.create({
+      owner: req.user.id,
+      type: "file_quarantined",
+      message: `Upload quarantined: ${scan.riskLevel} risk`,
+      file: file._id,
+      filename: file.filename
+    }).catch((e) => console.error("Failed to record security event:", e));
+  }
 
   res.json({ fileId: file._id });
 };
@@ -229,7 +297,12 @@ export const getFileMeta = async (req, res) => {
     limitReached: file.downloadCount >= file.maxDownloads,
     // Phase 3: only a boolean flag is exposed here (never the actual allowed countries/IPs/
     // devices) so an anonymous requester can't enumerate a file's access rules from /meta.
-    hasPolicy: hasActivePolicy(file.policy)
+    hasPolicy: hasActivePolicy(file.policy),
+    // Phase 4: exposed so the frontend can show a clear "this file was quarantined" message
+    // instead of attempting a download that the server will reject anyway.
+    scanStatus: file.scanStatus,
+    riskLevel: file.riskLevel,
+    quarantined: file.quarantined
   };
 
   if (file.encryptionVersion === 2) {
@@ -312,10 +385,43 @@ export const downloadFile = async (req, res) => {
     return res.status(403).json({ error: "download_limit_reached" });
   }
 
+  const context = await buildDownloadContext(req, file);
+
+  // Phase 4: quarantine is checked before the Zero Trust policy engine and unconditionally -
+  // there is no policy override or per-file config that can un-block a quarantined file except
+  // the owner explicitly releasing it (POST /api/threats/quarantine/:id/release).
+  if (file.quarantined) {
+    file.logs.push({
+      ip: context.ip,
+      time: context.time,
+      deviceId: context.deviceId,
+      browser: context.browser,
+      operatingSystem: context.operatingSystem,
+      country: context.country,
+      decision: "deny",
+      denialReason: "File is quarantined due to a threat scan detection",
+      scanStatus: file.scanStatus,
+      riskLevel: file.riskLevel
+    });
+    await file.save();
+
+    SecurityEvent.create({
+      owner: file.owner,
+      type: "download_denied",
+      message: `Blocked download of quarantined file (${file.riskLevel} risk)`,
+      file: file._id,
+      filename: file.filename,
+      deviceId: context.deviceId,
+      ip: context.ip,
+      country: context.country
+    }).catch((e) => console.error("Failed to record security event:", e));
+
+    return res.status(403).json({ error: "quarantined", riskLevel: file.riskLevel });
+  }
+
   // Zero Trust (Phase 3): evaluate the file's access policy (if any) before serving a single
   // byte. A file with no policy configured always evaluates to "allow" (see policyEngine.js) -
   // this is what keeps every pre-Phase-3 file working exactly as before.
-  const context = await buildDownloadContext(req, file);
   const policyDecision = evaluateDownloadPolicy(file.policy, context);
 
   if (policyDecision.decision === "deny") {
@@ -327,7 +433,9 @@ export const downloadFile = async (req, res) => {
       operatingSystem: context.operatingSystem,
       country: context.country,
       decision: "deny",
-      denialReason: policyDecision.reason
+      denialReason: policyDecision.reason,
+      scanStatus: file.scanStatus,
+      riskLevel: file.riskLevel
     });
     await file.save();
 
@@ -386,7 +494,9 @@ const downloadFileV1 = async (req, res, file, context) => {
     browser: context.browser,
     operatingSystem: context.operatingSystem,
     country: context.country,
-    decision: "allow"
+    decision: "allow",
+    scanStatus: file.scanStatus,
+    riskLevel: file.riskLevel
   });
   await file.save();
 
@@ -468,7 +578,9 @@ const downloadFileV2 = async (req, res, file, context) => {
     browser: context.browser,
     operatingSystem: context.operatingSystem,
     country: context.country,
-    decision: "allow"
+    decision: "allow",
+    scanStatus: file.scanStatus,
+    riskLevel: file.riskLevel
   });
   await file.save();
 

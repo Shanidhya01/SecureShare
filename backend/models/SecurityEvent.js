@@ -10,7 +10,7 @@ const securityEventSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ["new_device", "device_removed", "session_revoked", "download_denied"]
+    enum: ["new_device", "device_removed", "session_revoked", "download_denied", "file_quarantined"]
   },
   message: String,
 

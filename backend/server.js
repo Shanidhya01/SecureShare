@@ -9,6 +9,7 @@ import userRoutes from "./routes/user.routes.js";
 import deviceRoutes from "./routes/device.routes.js";
 import sessionRoutes from "./routes/session.routes.js";
 import securityRoutes from "./routes/security.routes.js";
+import threatRoutes from "./routes/threat.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 
@@ -39,6 +40,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/security", securityRoutes);
+app.use("/api/threats", threatRoutes);
 app.use("/api", ipRoutes);
 
 // Root and health endpoints

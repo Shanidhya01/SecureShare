@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2 } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2, ScanSearch, Bug } from "lucide-react";
 import toast from "react-hot-toast";
 import Navbar from "@/components/Navbar";
 import {
@@ -34,6 +34,11 @@ export default function UploadFile() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [signingStatus, setSigningStatus] = useState<"idle" | "signing" | "signed" | "unsigned">("idle");
+  // Phase 4: malware/threat scan, run against the plaintext file before it's ever encrypted -
+  // see backend/controllers/threat.controller.js for why this is the one deliberate moment the
+  // server sees unencrypted bytes (scoped to this single request, never persisted).
+  const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "clean" | "flagged" | "blocked">("idle");
+  const [scanResult, setScanResult] = useState<any>(null);
   // Phase 3: optional Zero Trust access policy, collapsed by default since most uploads don't need it.
   const [showPolicy, setShowPolicy] = useState(false);
   const [allowedCountries, setAllowedCountries] = useState("");
@@ -183,6 +188,44 @@ export default function UploadFile() {
     setError("");
     setUploadProgress(0);
     setSigningStatus("idle");
+    setScanStatus("scanning");
+    setScanResult(null);
+
+    // --- 0. Phase 4: scan the plaintext file for malware/threats BEFORE any encryption. This
+    // is the one deliberate exception to "the server never sees plaintext" - the buffer is
+    // scanned in memory for the duration of this single request and never persisted. A file
+    // flagged Critical/High risk is refused here so nothing gets encrypted/uploaded/stored at
+    // all; the server also independently blocks quarantined files from being downloaded even
+    // if this client-side gate were somehow bypassed.
+    let scanId: string;
+    try {
+      const scanFormData = new FormData();
+      scanFormData.append("file", file);
+      const scanRes = await api.post("/threats/scan", scanFormData, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
+      });
+      setScanResult(scanRes.data);
+
+      if (scanRes.data.quarantined) {
+        setScanStatus("blocked");
+        setError(
+          `Upload blocked: this file was flagged as ${scanRes.data.riskLevel} risk by the threat scanner and will not be uploaded.`
+        );
+        toast.error("File blocked by threat scan");
+        setUploading(false);
+        return;
+      }
+
+      setScanStatus(scanRes.data.riskLevel === "Low" ? "clean" : "flagged");
+      scanId = scanRes.data.scanId;
+    } catch (scanErr: any) {
+      setScanStatus("idle");
+      const msg = scanErr?.response?.data?.error || "Threat scan failed. Please try again.";
+      setError(msg);
+      toast.error("Threat scan failed");
+      setUploading(false);
+      return;
+    }
 
     // Simulate progress for better UX (actual progress can be tracked with axios)
     const progressInterval = setInterval(() => {
@@ -257,6 +300,7 @@ export default function UploadFile() {
       formData.append("iv", bufToBase64(iv));
       formData.append("mimeType", file.type);
       formData.append("wrappedOwnerKey", wrappedOwnerKey);
+      formData.append("scanId", scanId);
       if (passwordWrap) {
         formData.append("wrappedPasswordKey", passwordWrap.wrapped);
         formData.append("keySalt", passwordWrap.salt);
@@ -375,7 +419,11 @@ export default function UploadFile() {
             {/* Error Alert */}
             {error && (
               <div className="mb-6 p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg flex items-start gap-3">
-                <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                {scanStatus === "blocked" ? (
+                  <Bug size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                )}
                 <p className="text-red-200 text-sm">{error}</p>
               </div>
             )}
@@ -404,6 +452,15 @@ export default function UploadFile() {
                     >
                       {linkCopied ? <Check size={16} /> : <Copy size={16} />}
                     </button>
+                  </div>
+                )}
+                {scanResult && (
+                  <div className="mt-3 flex items-center gap-2 text-xs">
+                    <ScanSearch size={14} className={scanStatus === "clean" ? "text-green-300" : "text-yellow-300"} />
+                    <span className={scanStatus === "clean" ? "text-green-300" : "text-yellow-300"}>
+                      Threat scan: {scanResult.riskLevel} risk
+                      {scanResult.clamav?.status === "unavailable" && " (ClamAV unavailable in this environment)"}
+                    </span>
                   </div>
                 )}
                 {signingStatus === "signed" ? (
@@ -657,7 +714,11 @@ export default function UploadFile() {
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-slate-300 font-semibold text-sm">
-                    {signingStatus === "signing" ? "Signing file (ECDSA P-256)..." : "Uploading..."}
+                    {scanStatus === "scanning"
+                      ? "Scanning for threats..."
+                      : signingStatus === "signing"
+                      ? "Signing file (ECDSA P-256)..."
+                      : "Uploading..."}
                   </p>
                   <p className="text-blue-400 font-semibold text-sm">{Math.round(uploadProgress)}%</p>
                 </div>
