@@ -22,6 +22,10 @@ export default function Dashboard() {
     downloadCount: number;
     revoked?: boolean;
     owner?: { email?: string; name?: string };
+    passwordHash?: string;
+    wrappedPasswordKey?: string;
+    encryptionVersion?: number;
+    mimeType?: string;
   };
 
   const [files, setFiles] = useState<FileMeta[]>([]);

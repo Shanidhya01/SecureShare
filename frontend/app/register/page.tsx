@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail, User, AlertCircle, CheckCircle, Loader, ArrowRight } from "lucide-react";
 import toast from "react-hot-toast";
+import { encryptPrivateKey, exportPublicKey, generateRSAKeyPair, savePrivateKeyIndexedDB } from "@/lib/crypto/cryptoHelpers";
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -74,10 +75,40 @@ export default function Register() {
     setLoading(true);
     try {
       const { confirmPassword, ...registerData } = form;
-      await api.post("/auth/register", registerData);
+
+      // Generate this account's E2E encryption keypair while the plaintext password is still
+      // available in memory - this is the only point after account creation where we have it
+      // without asking the user to re-enter it. The private key is wrapped with this password
+      // and only ever leaves this function to be stored locally (IndexedDB); the public key
+      // is submitted alongside registration so the server can store it for other people to
+      // encrypt files to this user.
+      let keyPair: CryptoKeyPair;
+      let publicKeyBase64: string;
+      let wrappedPrivateKey: { wrappedPrivateKey: string; salt: string; iv: string; iterations: number };
+      try {
+        keyPair = await generateRSAKeyPair();
+        publicKeyBase64 = await exportPublicKey(keyPair.publicKey);
+        wrappedPrivateKey = await encryptPrivateKey(keyPair.privateKey, form.password);
+      } catch (cryptoErr) {
+        console.error("Encryption setup failed:", cryptoErr);
+        setErrors({ submit: "Failed to set up encryption on this device. Please try again." });
+        setLoading(false);
+        return;
+      }
+
+      await api.post("/auth/register", { ...registerData, publicKey: publicKeyBase64 });
+
+      // Only persist the wrapped private key locally after registration succeeded, to avoid
+      // orphaning a local keypair for an account that was never actually created.
+      await savePrivateKeyIndexedDB(form.email.toLowerCase().trim(), {
+        ...wrappedPrivateKey,
+        publicKeyBase64,
+        createdAt: Date.now(),
+      });
+
       setSuccess(true);
       toast.success("Account created successfully");
-      
+
       setTimeout(() => {
         toast.success("Redirecting to login");
         router.push("/login");

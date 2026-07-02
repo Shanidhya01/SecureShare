@@ -1,3 +1,6 @@
+// LEGACY: generates the global RSA keypair used only for encryptionVersion 1 (pre-E2E) file uploads.
+// Not used by the client-side E2E flow (v2) — each user now generates their own per-account keypair
+// in-browser (see frontend/lib/crypto.ts) and the private key never touches the server.
 import crypto from "crypto";
 import fs from "fs";
 

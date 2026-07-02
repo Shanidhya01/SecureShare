@@ -4,8 +4,24 @@ const fileSchema = new mongoose.Schema({
   filename: String,
   cloudinaryId: String,
 
+  // encryptionVersion 1 = legacy server-side AES-256-CBC (global RSA keypair).
+  // encryptionVersion 2 = client-side E2E AES-256-GCM (Web Crypto API, zero-knowledge).
+  encryptionVersion: { type: Number, default: 1 },
+  mimeType: String,
+  originalFilename: String,         // v2: original file name, kept distinct from `filename` for clarity/crypto-agility
+  algorithm: String,                // v2: e.g. "AES-256-GCM", recorded for future crypto-agility
+
+  // v1 fields: encryptedKey = AES key RSA-wrapped with the server's global keypair; iv = 16-byte CBC IV.
   encryptedKey: String,
+  // v1: base64 16-byte CBC IV. v2: base64 12-byte (96-bit) GCM IV. Never both on the same doc.
   iv: String,
+
+  // v2 fields: AES key wrapped client-side, server never sees the raw key.
+  wrappedOwnerKey: String,          // AES key wrapped with the uploader's own RSA-OAEP-SHA256 public key
+  wrappedPasswordKey: String,       // AES key wrapped with a PBKDF2(password)-derived key, only if a share password was set
+  keySalt: String,                  // base64 PBKDF2 salt for wrappedPasswordKey
+  keyIterations: { type: Number, default: 210000 },
+  passwordKeyIvHint: String,        // base64 IV used for the AES-GCM wrap of wrappedPasswordKey itself
 
   owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 

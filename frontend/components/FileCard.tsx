@@ -33,6 +33,8 @@ export default function FileCard({
     _id: string;
     filename: string;
     passwordHash?: string;
+    wrappedPasswordKey?: string;
+    encryptionVersion?: number;
     revoked?: boolean;
     owner?: { email?: string; name?: string };
   };
@@ -62,6 +64,14 @@ export default function FileCard({
   const hoursLeft = Math.floor(
     (timeUntilExpiry % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
   );
+
+  const isE2E = file.encryptionVersion === 2;
+
+  // v2 files are decrypted client-side on the dedicated /file/:id page - the dashboard has no
+  // way to reconstruct the original share link's fragment key (it was only ever shown once,
+  // right after upload), so "link" here always means "go to the decrypt page as the owner."
+  const e2eLink =
+    typeof window !== "undefined" ? `${window.location.origin}/file/${file._id}` : `/file/${file._id}`;
 
   const baseLink = `${
     process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"
@@ -102,6 +112,12 @@ export default function FileCard({
   };
 
   const handleDirectDownload = async () => {
+    if (isE2E) {
+      // v2 files are decrypted client-side; the owner's private key + owner-wrapped AES key
+      // live in the decrypt page, not here, so route there instead of fetching bytes directly.
+      router.push(`/file/${file._id}`);
+      return;
+    }
     try {
       setLoading(true);
       if (file.passwordHash) {
@@ -178,6 +194,16 @@ export default function FileCard({
 
   const handleCopyLink = async () => {
     try {
+      if (isE2E) {
+        // The original share link (with its fragment/password-protected key) was only ever
+        // shown once at upload time - this copies the account-access page instead, which the
+        // owner can use to decrypt while logged in.
+        await navigator.clipboard.writeText(e2eLink);
+        toast.success("File page link copied (decrypts using your account key)");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
       if (file.passwordHash) {
         setShowPwdModal(true);
         return;
@@ -389,12 +415,18 @@ export default function FileCard({
               <div className="bg-slate-700 rounded-lg p-3 border border-slate-600">
                 <div className="space-y-2">
                   <code className="text-xs text-slate-300 break-all">
-                    {getTrackedLink()}
+                    {isE2E ? e2eLink : getTrackedLink()}
                   </code>
-                  {file.passwordHash && (
+                  {isE2E ? (
                     <p className="text-slate-400 text-xs">
-                      This file is password protected. Append <span className="text-slate-200">?password=YOUR_PASSWORD</span> to the link when sharing.
+                      This is your account-access page. The original share link containing the decryption key was only shown once, right after upload - if you lost it, you can still decrypt here while logged in.
                     </p>
+                  ) : (
+                    file.passwordHash && (
+                      <p className="text-slate-400 text-xs">
+                        This file is password protected. Append <span className="text-slate-200">?password=YOUR_PASSWORD</span> to the link when sharing.
+                      </p>
+                    )
                   )}
                 </div>
               </div>

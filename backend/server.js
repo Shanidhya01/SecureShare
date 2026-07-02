@@ -5,6 +5,7 @@ import cors from "cors";
 
 import authRoutes from "./routes/auth.routes.js";
 import fileRoutes from "./routes/file.routes.js";
+import userRoutes from "./routes/user.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 
@@ -21,6 +22,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 app.use("/api/auth", authRoutes);
 app.use("/api/files", fileRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api", ipRoutes);
 
 // Root and health endpoints
