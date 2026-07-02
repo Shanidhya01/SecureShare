@@ -10,6 +10,8 @@ import {
   getAllFiles,
   getFileLogs,
   getFileMeta,
+  getFilePolicy,
+  updateFilePolicy,
   deleteFile
 } from "../controllers/file.controller.js";
 
@@ -24,5 +26,7 @@ router.delete("/file/:id", auth, revokeFile);
 router.delete("/file/:id/permanent", auth, deleteFile);
 router.get("/file/:id/logs", auth, getFileLogs);
 router.get("/file/:id/meta", getFileMeta);
+router.get("/file/:id/policy", auth, getFilePolicy);
+router.patch("/file/:id/policy", auth, updateFilePolicy);
 
 export default router;

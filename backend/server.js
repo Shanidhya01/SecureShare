@@ -6,6 +6,9 @@ import cors from "cors";
 import authRoutes from "./routes/auth.routes.js";
 import fileRoutes from "./routes/file.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import deviceRoutes from "./routes/device.routes.js";
+import sessionRoutes from "./routes/session.routes.js";
+import securityRoutes from "./routes/security.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 
@@ -17,12 +20,25 @@ app.use(cors());
 app.use(express.json());
 app.use("/api", apiLimiter);
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"));
+if (!process.env.MONGO_URI) {
+  console.error("MongoDB connection error: MONGO_URI is not set in backend/.env");
+} else {
+  mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => console.log("MongoDB connected"))
+    .catch((err) => console.error("MongoDB connection error:", err.message));
+}
+
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB connection error (post-connect):", err.message);
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/devices", deviceRoutes);
+app.use("/api/sessions", sessionRoutes);
+app.use("/api/security", securityRoutes);
 app.use("/api", ipRoutes);
 
 // Root and health endpoints

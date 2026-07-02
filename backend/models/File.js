@@ -41,8 +41,35 @@ const fileSchema = new mongoose.Schema({
   expiresAt: Date,
   downloadCount: { type: Number, default: 0 },
 
-  // Download logs: who, from where, and when
-  logs: [{ ip: String, userEmail: String, time: Date }]
+  // Phase 3: Zero Trust access policy. Every field is optional/empty by default, so files with
+  // no policy configured behave exactly as before (backend/services/policyEngine.js treats an
+  // all-empty policy as "no restrictions, allow"). Evaluated on every download attempt.
+  policy: {
+    allowedCountries: { type: [String], default: [] },  // ISO country codes; empty = unrestricted
+    allowedIPs: { type: [String], default: [] },         // empty = unrestricted
+    allowedDevices: { type: [String], default: [] },     // device fingerprint hashes; empty = unrestricted
+    businessHours: {
+      enabled: { type: Boolean, default: false },
+      startHour: { type: Number, default: 0 },  // UTC hour, 0-23
+      endHour: { type: Number, default: 24 }    // UTC hour, 0-24 (24 = midnight end-of-day)
+    },
+    maxDevices: { type: Number, default: 0 },     // 0 = unlimited distinct devices
+    requireApproval: { type: Boolean, default: false } // require an authenticated, trusted-device recipient
+  },
+
+  // Download logs: who, from where, and when - extended in Phase 3 with device/policy context.
+  // Populated for both allowed and denied attempts (decision/denialReason distinguish them).
+  logs: [{
+    ip: String,
+    userEmail: String,
+    time: Date,
+    deviceId: String,
+    browser: String,
+    operatingSystem: String,
+    country: String,
+    decision: { type: String, enum: ["allow", "deny"] },
+    denialReason: String
+  }]
 }, { timestamps: true });
 
 export default mongoose.model("File", fileSchema);

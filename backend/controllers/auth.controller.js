@@ -1,6 +1,13 @@
+import crypto from "crypto";
 import User from "../models/User.js";
+import Device from "../models/Device.js";
+import Session from "../models/Session.js";
+import SecurityEvent from "../models/SecurityEvent.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { parseUserAgent } from "../utils/deviceContext.js";
+import { resolveCountry } from "../utils/geoLookup.js";
+import { getClientIp } from "../utils/getClientIp.js";
 
 export const register = async (req, res) => {
   try {
@@ -39,7 +46,7 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, deviceId } = req.body;
     const normalizedEmail = typeof email === "string" ? email.toLowerCase().trim() : "";
 
     if (!normalizedEmail || !password) {
@@ -52,7 +59,53 @@ export const login = async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ error: "Invalid" });
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+    // Zero Trust (Phase 3): a successful password check bootstraps trust for this device -
+    // record/refresh it, and track this login as a revocable session.
+    const ip = getClientIp(req);
+    const country = resolveCountry(req);
+    const { browser, operatingSystem } = parseUserAgent(req.headers["user-agent"]);
+    const cleanDeviceId = typeof deviceId === "string" && deviceId.length > 0 ? deviceId : undefined;
+
+    if (cleanDeviceId) {
+      const existingDevice = await Device.findOne({ owner: user._id, deviceId: cleanDeviceId });
+      if (existingDevice) {
+        existingDevice.lastSeenAt = new Date();
+        existingDevice.lastIp = ip;
+        await existingDevice.save();
+      } else {
+        await Device.create({
+          owner: user._id,
+          deviceId: cleanDeviceId,
+          label: `${browser} on ${operatingSystem}`,
+          browser,
+          operatingSystem,
+          userAgent: req.headers["user-agent"] || "",
+          lastIp: ip,
+          trusted: true
+        });
+        await SecurityEvent.create({
+          owner: user._id,
+          type: "new_device",
+          message: `New device signed in: ${browser} on ${operatingSystem}`,
+          deviceId: cleanDeviceId,
+          ip,
+          country
+        });
+      }
+    }
+
+    const sessionId = crypto.randomUUID();
+    await Session.create({
+      owner: user._id,
+      sessionId,
+      deviceId: cleanDeviceId,
+      browser,
+      operatingSystem,
+      ip,
+      country
+    });
+
+    const token = jwt.sign({ id: user._id, sid: sessionId }, process.env.JWT_SECRET);
     res.json({ token, user: { email: user.email, name: user.name } });
   } catch (err) {
     console.error("Login error:", err);

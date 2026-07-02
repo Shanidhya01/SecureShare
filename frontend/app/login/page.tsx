@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail, AlertCircle, Loader } from "lucide-react";
 import toast from "react-hot-toast";
+import { getDeviceId } from "@/lib/security/fingerprint";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -41,7 +42,17 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await api.post("/auth/login", { email, password });
+      // Zero Trust (Phase 3): a stable, privacy-preserving device fingerprint hash accompanies
+      // login so the backend can recognize this device on future requests (Security Center
+      // device list, trusted-device access policies). Never blocks login if it fails.
+      let deviceId: string | undefined;
+      try {
+        deviceId = await getDeviceId();
+      } catch (fingerprintErr) {
+        console.error("Device fingerprinting failed:", fingerprintErr);
+      }
+
+      const res = await api.post("/auth/login", { email, password, deviceId });
       
       if (res.data?.token) {
         localStorage.setItem("token", res.data.token);

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Upload, LogOut, Lock, LogIn, UserPlus } from "lucide-react";
+import { Upload, LogOut, Lock, LogIn, UserPlus, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
 
 export default function Navbar() {
@@ -71,6 +71,13 @@ export default function Navbar() {
                   className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
                 >
                   DashBoard
+                </button>
+                <button
+                  onClick={() => router.push("/security")}
+                  className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                >
+                  <ShieldCheck size={18} />
+                  Security
                 </button>
                 <button
                   onClick={logout}

@@ -2,6 +2,7 @@
  * Utility to download files with IP tracking
  * The backend handles IP detection
  */
+import { getDeviceId } from "@/lib/security/fingerprint";
 
 const API_URL = process.env.NEXT_PUBLIC_API || "http://localhost:5000/api";
 
@@ -26,14 +27,29 @@ export const downloadFileWithIpTracking = async (
       url: url.toString(),
     });
 
+    // Zero Trust (Phase 3): attach the device fingerprint so any allowedDevices/maxDevices
+    // policy on this file can be evaluated. Never blocks the download if fingerprinting fails.
+    const headers: Record<string, string> = {};
+    try {
+      headers["x-device-id"] = await getDeviceId();
+    } catch {
+      // ignore - policy checks that need a deviceId will simply see none
+    }
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
     // Make the fetch request - backend will detect real IP
     const response = await fetch(url.toString(), {
       method: "GET",
+      headers,
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Download error response:", errorText);
+      const body = await response.json().catch(() => ({} as { error?: string; reason?: string }));
+      if (body?.error === "policy_denied") {
+        throw new Error(`Access denied by security policy: ${body.reason || "restricted"}`);
+      }
+      console.error("Download error response:", body);
       throw new Error(`Download failed with status ${response.status}`);
     }
 

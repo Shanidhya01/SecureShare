@@ -18,6 +18,7 @@ import {
 } from "@/lib/crypto/cryptoHelpers";
 import { AlertCircle, Lock, Download, Loader, ShieldCheck, ShieldAlert, ShieldQuestion, Clock, Ban } from "lucide-react";
 import toast from "react-hot-toast";
+import { getDeviceId } from "@/lib/security/fingerprint";
 
 type FileMeta = {
   encryptionVersion: number;
@@ -43,6 +44,9 @@ type FileMeta = {
   signatureAlgorithm?: string | null;
   signedAt?: string | null;
   ownerSigningPublicKey?: string | null;
+  // Phase 3: whether this file has any Zero Trust access policy configured (never exposes the
+  // actual rules to an anonymous requester - just whether extra checks will be evaluated).
+  hasPolicy?: boolean;
 };
 
 type SignatureStatus = "idle" | "verifying" | "verified" | "unsigned" | "failed";
@@ -106,12 +110,29 @@ export default function FileDownloadPage() {
   };
 
   const fetchCiphertext = async (): Promise<ArrayBuffer> => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"}/files/download/${fileId}`);
+    // Zero Trust (Phase 3): the device fingerprint travels as a header (never a raw file field)
+    // so the backend's policy engine can evaluate allowedDevices/maxDevices rules. Authorization
+    // is attached too, if the recipient happens to be logged in, so requireApproval can identify
+    // them - the download route itself stays public and works fine without either.
+    const headers: Record<string, string> = {};
+    try {
+      headers["x-device-id"] = await getDeviceId();
+    } catch {
+      // fingerprinting failures never block a download - just means device-based policy
+      // checks (if any) will see no deviceId and evaluate accordingly.
+    }
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"}/files/download/${fileId}`, {
+      headers,
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       if (body?.error === "download_limit_reached") throw new Error("LIMIT_REACHED");
       if (body?.error === "revoked") throw new Error("REVOKED");
       if (body?.error === "expired") throw new Error("EXPIRED");
+      if (body?.error === "policy_denied") throw new Error(`POLICY_DENIED:${body.reason || "Access denied by security policy"}`);
       throw new Error("NETWORK");
     }
     return res.arrayBuffer();
@@ -127,6 +148,9 @@ export default function FileDownloadPage() {
     if (message === "REVOKED") return "This file's access has been revoked.";
     if (message === "EXPIRED") return "This file has expired.";
     if (message === "NETWORK") return "Network error while fetching the encrypted file. Please try again.";
+    if (message.startsWith("POLICY_DENIED:")) {
+      return `🔒 Access denied by security policy: ${message.slice("POLICY_DENIED:".length)}`;
+    }
     if (message === "TAMPERED") {
       return "⚠ Signature verification failed - this file may have been tampered with. Download blocked for your safety.";
     }
@@ -234,7 +258,12 @@ export default function FileDownloadPage() {
       await downloadFileWithIpTracking(fileId, undefined, meta?.hasPassword ? passwordInput : undefined);
     } catch (err) {
       console.error("Download failed:", err);
-      setDecryptError(meta?.hasPassword ? "Wrong password or download failed." : "Download failed.");
+      const message = err instanceof Error ? err.message : "";
+      if (message.startsWith("Access denied by security policy")) {
+        setDecryptError(`🔒 ${message}`);
+      } else {
+        setDecryptError(meta?.hasPassword ? "Wrong password or download failed." : "Download failed.");
+      }
     } finally {
       setDecrypting(false);
     }
@@ -274,11 +303,17 @@ export default function FileDownloadPage() {
                 <h1 className="text-2xl font-bold text-white mb-1 text-center break-all">
                   {meta.originalFilename || meta.filename}
                 </h1>
-                <p className="text-slate-400 text-sm text-center mb-6">
+                <p className={`text-slate-400 text-sm text-center ${meta.hasPolicy ? "mb-2" : "mb-6"}`}>
                   {meta.encryptionVersion === 2
                     ? "This file is end-to-end encrypted. Decryption happens locally in your browser."
                     : "Secure file download"}
                 </p>
+                {meta.hasPolicy && (
+                  <p className="text-slate-500 text-xs text-center mb-6 flex items-center justify-center gap-1">
+                    <Lock size={12} />
+                    This file has additional access restrictions set by its owner.
+                  </p>
+                )}
 
                 {meta.limitReached ? (
                   <div className="p-4 bg-orange-500 bg-opacity-20 border border-orange-500 border-opacity-50 rounded-lg text-center">

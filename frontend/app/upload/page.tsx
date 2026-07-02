@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2 } from "lucide-react";
 import toast from "react-hot-toast";
 import Navbar from "@/components/Navbar";
 import {
@@ -34,6 +34,15 @@ export default function UploadFile() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [signingStatus, setSigningStatus] = useState<"idle" | "signing" | "signed" | "unsigned">("idle");
+  // Phase 3: optional Zero Trust access policy, collapsed by default since most uploads don't need it.
+  const [showPolicy, setShowPolicy] = useState(false);
+  const [allowedCountries, setAllowedCountries] = useState("");
+  const [allowedIPs, setAllowedIPs] = useState("");
+  const [businessHoursEnabled, setBusinessHoursEnabled] = useState(false);
+  const [businessStartHour, setBusinessStartHour] = useState("9");
+  const [businessEndHour, setBusinessEndHour] = useState("17");
+  const [maxDevices, setMaxDevices] = useState("");
+  const [requireApproval, setRequireApproval] = useState(false);
   const router = useRouter();
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const { needsSetup, isUnlocked, signingPrivateKey, checking: checkingKey } = useCryptoKey();
@@ -118,6 +127,36 @@ export default function UploadFile() {
 
     const droppedFile = e.dataTransfer.files?.[0] ?? null;
     handleFileSelect(droppedFile);
+  };
+
+  /** Builds the Phase 3 Zero Trust access-policy payload from the advanced-section inputs.
+   *  Returns null if nothing was actually configured, so the upload proceeds with no policy
+   *  at all (the default, unrestricted behavior) rather than sending an empty-but-present one. */
+  const buildPolicyPayload = () => {
+    const countries = allowedCountries
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const ips = allowedIPs
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const maxDev = parseInt(maxDevices) || 0;
+
+    const hasAnyRestriction = countries.length > 0 || ips.length > 0 || businessHoursEnabled || maxDev > 0 || requireApproval;
+    if (!hasAnyRestriction) return null;
+
+    return {
+      allowedCountries: countries,
+      allowedIPs: ips,
+      businessHours: {
+        enabled: businessHoursEnabled,
+        startHour: parseInt(businessStartHour) || 0,
+        endHour: parseInt(businessEndHour) || 24,
+      },
+      maxDevices: maxDev,
+      requireApproval,
+    };
   };
 
   const uploadFile = async () => {
@@ -233,6 +272,11 @@ export default function UploadFile() {
       }
       formData.append("maxDownloads", maxDownloads);
       formData.append("expiryHours", expiryHours);
+
+      const policyPayload = buildPolicyPayload();
+      if (policyPayload) {
+        formData.append("policy", JSON.stringify(policyPayload));
+      }
 
       const request = api.post("/files/upload", formData, {
         headers: {
@@ -496,6 +540,114 @@ export default function UploadFile() {
                     />
                     <p className="text-slate-500 text-xs mt-1">Up to 30 days</p>
                   </div>
+                </div>
+
+                {/* Phase 3: Zero Trust access policy (optional, collapsed by default) */}
+                <div className="mt-4 border-t border-slate-600 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPolicy(!showPolicy)}
+                    disabled={uploading}
+                    className="w-full flex items-center justify-between text-slate-300 text-xs font-semibold"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Globe2 size={14} />
+                      Advanced Security Policy (Zero Trust)
+                    </span>
+                    {showPolicy ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+
+                  {showPolicy && (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-slate-500 text-xs">
+                        Every rule below is optional. Leave everything blank for an unrestricted file - this only
+                        applies extra checks the file's recipients must pass before downloading.
+                      </p>
+
+                      <div>
+                        <label className="block text-slate-300 text-xs font-semibold mb-1">Allowed countries</label>
+                        <input
+                          type="text"
+                          value={allowedCountries}
+                          onChange={(e) => setAllowedCountries(e.target.value)}
+                          placeholder="US, IN, GB (comma-separated ISO codes)"
+                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          disabled={uploading}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-300 text-xs font-semibold mb-1">Allowed IP addresses</label>
+                        <input
+                          type="text"
+                          value={allowedIPs}
+                          onChange={(e) => setAllowedIPs(e.target.value)}
+                          placeholder="203.0.113.5, 198.51.100.2 (comma-separated)"
+                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          disabled={uploading}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="flex items-center gap-2 text-slate-300 text-xs font-semibold mb-2">
+                          <input
+                            type="checkbox"
+                            checked={businessHoursEnabled}
+                            onChange={(e) => setBusinessHoursEnabled(e.target.checked)}
+                            disabled={uploading}
+                          />
+                          Restrict to specific hours (UTC)
+                        </label>
+                        {businessHoursEnabled && (
+                          <div className="grid grid-cols-2 gap-3">
+                            <input
+                              type="number"
+                              min="0"
+                              max="23"
+                              value={businessStartHour}
+                              onChange={(e) => setBusinessStartHour(e.target.value)}
+                              placeholder="Start hour"
+                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                              disabled={uploading}
+                            />
+                            <input
+                              type="number"
+                              min="0"
+                              max="24"
+                              value={businessEndHour}
+                              onChange={(e) => setBusinessEndHour(e.target.value)}
+                              placeholder="End hour"
+                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                              disabled={uploading}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-300 text-xs font-semibold mb-1">Max distinct devices</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={maxDevices}
+                          onChange={(e) => setMaxDevices(e.target.value)}
+                          placeholder="0 = unlimited"
+                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          disabled={uploading}
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-2 text-slate-300 text-xs font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={requireApproval}
+                          onChange={(e) => setRequireApproval(e.target.checked)}
+                          disabled={uploading}
+                        />
+                        Require an authenticated, trusted-device recipient
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

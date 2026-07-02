@@ -86,6 +86,7 @@ SecureShare/
 │   │   ├── register/             # Registration page
 │   │   ├── upload/               # File upload page
 │   │   ├── dashboard/            # User dashboard
+│   │   ├── security/             # Phase 3: Security Center (devices, sessions, events)
 │   │   └── file/[id]/            # File detail & download
 │   ├── components/               # Reusable React components
 │   │   ├── Navbar.tsx
@@ -244,10 +245,69 @@ The upload page shows a "Signing file (ECDSA P-256)..." progress step during sig
 ### Known limitation & future hardening
 As noted in the trust model, the signing public key used for verification is fetched from the same server whose compromise this feature partly defends against. A fully hardened design would let users independently verify each other's signing public keys out-of-band (e.g., a key fingerprint displayed on each user's profile that recipients can cross-check via a side channel) — this is a natural next step, not yet implemented.
 
+---
+
+## 🛡️ Phase 3: Zero Trust Access Control
+
+Phase 1 secures *what* is stored (confidentiality) and Phase 2 secures *who produced it* (authenticity/integrity). Phase 3 adds a third, independent layer: **access control that never assumes a request is legitimate just because it arrived** — every download is evaluated against the requester's device, network, timing, and (optionally) identity, regardless of whether the file's encryption/signing checks pass. This is what "Zero Trust" means here: no implicit trust from network location, a valid-looking link, or a prior successful login — every access attempt is evaluated on its own merits, every time.
+
+### Zero Trust model
+- **Never trust, always verify**: possessing a share link (and even the correct decryption key) is necessary but not sufficient to download a policy-protected file — the request must also satisfy every rule configured on that file (see below).
+- **Device trust is bootstrapped, not assumed**: a device becomes "trusted" for a user only after successfully authenticating with that user's password from it (see [Device fingerprinting](#device-fingerprinting) below) — trust is earned per-device, not inherited from the account.
+- **Sessions are independently revocable**: authentication (a valid JWT) and session validity (that JWT's session hasn't been revoked) are checked separately on every request — logging in doesn't grant indefinite trust; a session can be cut off from the Security Center at any time, from any device, without changing the password.
+- **Policy evaluation is additive, never assumed**: this whole layer is opt-in per file. A file with no policy configured is unaffected — it behaves exactly as it did in Phase 1/2. Zero Trust here means "verify every request against whatever rules exist," not "add friction by default."
+
+### Device fingerprinting
+Every login computes a **stable, privacy-minimal device identifier** in the browser (`frontend/lib/security/fingerprint.ts`) by hashing a fixed set of attributes with SHA-256:
+- `navigator.userAgent`, `navigator.platform`, `navigator.language`
+- `Intl.DateTimeFormat().resolvedOptions().timeZone`
+- screen resolution + color depth
+- a canvas rendering fingerprint (drawing fixed text/shapes to an offscreen `<canvas>` and hashing the resulting pixel data — a common browser/GPU/font-rendering signal that's stable per device but reveals nothing about the user)
+
+**Only the resulting hash is ever sent to the server** — none of the raw attribute values are transmitted or stored, which is what keeps this "unnecessary personal data"-free: the server learns "this is the same device as last time," never the underlying fingerprint data itself (most of which — like the User-Agent string — it would see in every request's headers regardless).
+
+A device that successfully authenticates (correct password) is recorded and trusted automatically (`Device` model, `backend/controllers/auth.controller.js`'s `login`) — this is the trust bootstrap: no separate approval workflow is required, since a correct password is already the credential proving "this is the account owner." A first-time device also emits a `new_device` security event.
+
+### Session management
+Login now embeds a random session id (`sid`) in the JWT and records a matching `Session` document (browser, OS, IP, country, device, timestamps). `backend/middleware/auth.middleware.js` checks, on every authenticated request, that the token's session hasn't been revoked — a session revoked from the Security Center is rejected on its very next request, without needing the token itself to expire or the password to change. Tokens issued before this existed carry no `sid` claim and are treated as untracked "legacy sessions" that skip the revocation check, so upgrading doesn't log anyone out.
+
+### Access policy engine
+`backend/services/policyEngine.js` is a **pure function** — no DB or network access — that evaluates a resolved request context against a file's optional `policy` subdocument and returns `{ decision: "allow" }` or `{ decision: "deny", reason }`. Being pure makes it trivial to unit test (every branch is a one-line assertion) and safe to reuse from any future call site.
+
+Every check is independently opt-in (`backend/models/File.js`'s `policy` field):
+
+| Field | Effect |
+|---|---|
+| `allowedCountries` | Only these ISO country codes (resolved from geo-IP headers, see below) may download |
+| `allowedIPs` | Only these exact IP addresses may download |
+| `allowedDevices` | Only these device fingerprint hashes may download |
+| `businessHours` | Restrict downloads to a UTC hour range (supports overnight windows, e.g. 22:00-06:00) |
+| `maxDevices` | Cap the number of *distinct* devices that may ever download this file |
+| `requireApproval` | Require an authenticated requester on a trusted device (blocks anonymous/link-only access entirely) |
+
+A file with **no policy fields set evaluates to `allow` unconditionally** — this is what preserves every file that existed before Phase 3, and every new file that doesn't opt into any restriction.
+
+`GET/PATCH /api/files/file/:id/policy` (owner-only) let the uploader view/edit a file's policy after upload; the upload page also exposes an optional, collapsed-by-default "Advanced Security Policy" section for setting one at upload time.
+
+**Country resolution** is a best-effort read of common CDN/proxy geo-IP headers (`CF-IPCountry`, `X-Vercel-IP-Country`, ...) — this app does not call any external geo-IP API or ship a MaxMind-style database (`backend/utils/geoLookup.js`). Locally, or on a host that doesn't inject one of those headers, country resolves to `"Unknown"`, and any `allowedCountries` restriction simply can't be satisfied (fails closed). Swap in a real geo-IP provider there for production deployments that need it.
+
+### Extended audit logs
+Every download attempt — allowed *or denied* — appends an entry to `File.logs[]`, now including `deviceId`, `browser`, `operatingSystem`, `country`, `decision` (`"allow"`/`"deny"`), and `denialReason` alongside the existing `ip`/`userEmail`/`time`. This means the same per-file audit trail the dashboard already showed (`/file/:id/logs`) now doubles as a full Zero Trust decision log for that file, with no separate query needed.
+
+### Security Center
+`frontend/app/security/page.tsx` (linked from the navbar) gives users one place to review and act on all of the above:
+- **Trusted Devices** — every device that has ever logged in, with last-seen time/IP and a remove action (removing a device also revokes any sessions created from it)
+- **Active Sessions** — every non-revoked session, with browser/OS/IP/country/login time, and a per-session revoke action (works even on the current session — revoking it logs that browser out on its next request)
+- **Blocked Access Attempts** — every `download_denied` policy decision against the user's own files, with the specific reason
+- **Recent Security Events** — new-device logins, device removals, and session revocations, in one activity feed
+
+### Backward compatibility
+Every Phase 3 addition is additive to the existing schema and strictly opt-in at evaluation time: `File.policy` defaults to an all-empty subdocument (`hasActivePolicy()` returns `false`, `evaluateDownloadPolicy()` returns `allow`), so every file created before Phase 3 - and every new file that doesn't configure a policy - downloads exactly as it did in Phase 1/2. Sessions predating the `sid` JWT claim skip the revocation check entirely rather than being rejected.
+
 ### Authentication
 - **Registration**: Email & password → bcryptjs hashing (salt rounds: 10)
-- **Login**: Credentials validated → JWT token generated (expires: 24 hours)
-- **Protected Routes**: All file operations require valid JWT token
+- **Login**: Credentials validated → JWT token generated, embedding a session id (`sid`) tied to a revocable `Session` record → device fingerprint (if provided) recorded/refreshed as a trusted device
+- **Protected Routes**: All file operations require a valid JWT token whose session (if tracked) hasn't been revoked
 
 ### Access Control
 - **One-Time Links**: After 1 download, link becomes inactive
@@ -255,6 +315,7 @@ As noted in the trust model, the signing public key used for verification is fet
 - **Time-Based Expiry**: Files auto-delete after specified duration
 - **Password Protection**: Additional layer of security
 - **Link Revocation**: Owner can revoke access anytime
+- **Zero Trust Access Policy** (Phase 3, optional per file): country/IP/device allowlists, business-hours windows, max-device caps, and approval requirements — see above
 
 ---
 
@@ -414,6 +475,8 @@ docker-compose down
 | `GET` | `/download/:fileId` | Download file bytes (decrypted server-side for v1, raw ciphertext for v2) | No |
 | `DELETE` | `/:fileId` | Delete/revoke file | Yes |
 | `GET` | `/logs/:fileId` | Get download audit logs | Yes |
+| `GET` | `/file/:id/policy` | Get a file's Zero Trust access policy (Phase 3, owner-only) | Yes |
+| `PATCH` | `/file/:id/policy` | Set/update a file's Zero Trust access policy (Phase 3, owner-only) | Yes |
 
 ### User Routes (`/api/users`)
 
@@ -423,6 +486,26 @@ docker-compose down
 | `GET` | `/publickey` | Get your own stored public key | Yes |
 | `PATCH` | `/signingkey` | Set/update your ECDSA P-256 signing public key (base64 SPKI, Phase 2) | Yes |
 | `GET` | `/signingkey` | Get your own stored signing public key | Yes |
+
+### Device Routes (`/api/devices`, Phase 3)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/` | List your trusted devices | Yes |
+| `DELETE` | `/:deviceId` | Remove a trusted device (also revokes its sessions) | Yes |
+
+### Session Routes (`/api/sessions`, Phase 3)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/` | List your active (non-revoked) sessions | Yes |
+| `DELETE` | `/:sessionId` | Revoke a session | Yes |
+
+### Security Routes (`/api/security`, Phase 3)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/events` | Recent security events (new devices, revocations, blocked downloads) | Yes |
 
 **Upload Request:**
 ```json
@@ -614,15 +697,92 @@ docker run -p 3000:3000 secureshare-frontend
   downloadCount: Number,
   revoked: Boolean,
   expiresAt: Date,
+
+  // Phase 3: Zero Trust access policy. All fields optional/empty by default - a file with no
+  // policy configured is unaffected (see backend/services/policyEngine.js).
+  policy: {
+    allowedCountries: [String],  // ISO country codes; empty = unrestricted
+    allowedIPs: [String],        // empty = unrestricted
+    allowedDevices: [String],    // device fingerprint hashes; empty = unrestricted
+    businessHours: {
+      enabled: Boolean,
+      startHour: Number,  // UTC hour, 0-23
+      endHour: Number      // UTC hour, 0-24
+    },
+    maxDevices: Number,          // 0 = unlimited distinct devices
+    requireApproval: Boolean     // require an authenticated, trusted-device recipient
+  },
+
+  // Download logs - extended in Phase 3 with device/policy context, populated for both
+  // allowed and denied attempts (decision/denialReason distinguish them).
   logs: [
     {
       ip: String,
       userEmail: String,
-      time: Date
+      time: Date,
+      deviceId: String,
+      browser: String,
+      operatingSystem: String,
+      country: String,
+      decision: String,      // "allow" | "deny"
+      denialReason: String   // present only when decision === "deny"
     }
   ],
   createdAt: Timestamp,
   updatedAt: Timestamp
+}
+```
+
+### Device Collection (Phase 3)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+  deviceId: String,       // client-generated fingerprint hash (see frontend/lib/security/fingerprint.ts)
+  label: String,          // e.g. "Chrome on Windows"
+  browser: String,
+  operatingSystem: String,
+  userAgent: String,
+  firstSeenAt: Date,
+  lastSeenAt: Date,
+  lastIp: String,
+  trusted: Boolean,
+  revoked: Boolean,
+  createdAt: Timestamp,
+  updatedAt: Timestamp
+}
+```
+
+### Session Collection (Phase 3)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+  sessionId: String,   // matches the `sid` claim embedded in that login's JWT
+  deviceId: String,
+  browser: String,
+  operatingSystem: String,
+  ip: String,
+  country: String,
+  createdAt: Date,
+  lastActiveAt: Date,
+  revoked: Boolean
+}
+```
+
+### SecurityEvent Collection (Phase 3)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+  type: String,   // "new_device" | "device_removed" | "session_revoked" | "download_denied"
+  message: String,
+  file: ObjectId (ref: File),   // present for download_denied events
+  filename: String,
+  deviceId: String,
+  ip: String,
+  country: String,
+  createdAt: Date
 }
 ```
 
@@ -721,6 +881,12 @@ For issues, questions, or suggestions:
 **Q: How many users can the system handle?**
 - A: Depends on infrastructure. MongoDB Atlas can scale horizontally. Consider load balancing for production.
 
+**Q: What is Zero Trust access control, and is it required?**
+- A: It's an optional, per-file layer (Phase 3) that evaluates every download attempt against configurable rules — allowed countries/IPs/devices, business-hours windows, a max-device cap, or a requirement that the recipient be an authenticated, trusted-device user. It's entirely opt-in: a file with no policy configured behaves exactly as before. See [Phase 3: Zero Trust Access Control](#️-phase-3-zero-trust-access-control).
+
+**Q: What data does device fingerprinting collect?**
+- A: None that leaves your browser in raw form. A SHA-256 hash of a fixed set of browser attributes (user agent, platform, language, timezone, screen size, and a canvas rendering signature) is computed locally and only that hash is sent to the server — enough to recognize "same device as last time," nothing else.
+
 ---
 
 ## 🚀 Future Enhancements
@@ -738,6 +904,9 @@ Planned features and improvements:
 - [ ] API keys for programmatic access
 - [ ] Webhooks for integrations
 - [ ] Mobile app (React Native)
+- [x] Zero Trust access control: device fingerprinting, session management, per-file access policies (Phase 3)
+- [ ] Real geo-IP provider integration (currently a CDN-header stub, see Phase 3's country resolution)
+- [ ] In-app approval workflow for `requireApproval` policy files (currently requires an already-trusted device)
 - [x] End-to-end encryption on client side
 - [x] Digital signatures / integrity verification (Phase 2 — ECDSA P-256)
 - [ ] Social sharing options

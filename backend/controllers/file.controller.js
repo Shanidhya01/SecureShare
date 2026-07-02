@@ -1,14 +1,50 @@
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import streamifier from "streamifier";
 import cloudinary from "../utils/cloudinary.js";
 import File from "../models/File.js";
 import User from "../models/User.js";
+import Device from "../models/Device.js";
+import SecurityEvent from "../models/SecurityEvent.js";
 import { encryptBuffer } from "../utils/legacy/encrypt.js";
 import { decryptBuffer } from "../utils/legacy/decrpyt.js";
 import https from "https";
 import fs from "fs";
 import { getClientIp } from "../utils/getClientIp.js";
+import { parseUserAgent } from "../utils/deviceContext.js";
+import { resolveCountry } from "../utils/geoLookup.js";
+import { evaluateDownloadPolicy, hasActivePolicy } from "../services/policyEngine.js";
+
+/* Parses/sanitizes the optional Phase 3 access-policy JSON string sent with an upload into the
+   File.policy subdocument shape. Returns undefined if no meaningful policy was provided, so
+   Mongoose applies its schema defaults (an all-empty, "no restrictions" policy). */
+const parsePolicyInput = (raw) => {
+  if (!raw) return undefined;
+  let parsed;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") return undefined;
+
+  const toStringArray = (v) =>
+    Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+
+  return {
+    allowedCountries: toStringArray(parsed.allowedCountries),
+    allowedIPs: toStringArray(parsed.allowedIPs),
+    allowedDevices: toStringArray(parsed.allowedDevices),
+    businessHours: {
+      enabled: !!parsed.businessHours?.enabled,
+      startHour: Math.min(Math.max(parseInt(parsed.businessHours?.startHour) || 0, 0), 23),
+      endHour: Math.min(Math.max(parseInt(parsed.businessHours?.endHour) || 24, 0), 24)
+    },
+    maxDevices: Math.max(parseInt(parsed.maxDevices) || 0, 0),
+    requireApproval: !!parsed.requireApproval
+  };
+};
 
 /* UPLOAD */
 export const uploadFile = async (req, res) => {
@@ -27,7 +63,8 @@ export const uploadFile = async (req, res) => {
       return res.status(500).json({ error: "Cloudinary not configured (missing env vars)" });
     }
 
-    const opts = { parsedMaxDownloads, parsedExpiryHours, expiryMs };
+    const policy = parsePolicyInput(req.body.policy);
+    const opts = { parsedMaxDownloads, parsedExpiryHours, expiryMs, policy };
 
     const encryptionVersion = parseInt(req.body.encryptionVersion) === 2 ? 2 : 1;
     if (encryptionVersion === 2) return uploadFileV2(req, res, opts);
@@ -41,7 +78,7 @@ export const uploadFile = async (req, res) => {
 
 /* UPLOAD - legacy (encryptionVersion 1): server encrypts with the global RSA keypair. Unchanged
    behavior, kept only for backward compatibility; new clients always send encryptionVersion=2. */
-const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
+const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) => {
   const { password } = req.body;
 
   // Load RSA public key from env or filesystem
@@ -86,7 +123,8 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
     owner: req.user.id,
     oneTime: parsedMaxDownloads === 1,
     maxDownloads: parsedMaxDownloads,
-    expiresAt: new Date(Date.now() + expiryMs)
+    expiresAt: new Date(Date.now() + expiryMs),
+    policy
   });
 
   res.json({ fileId: file._id });
@@ -95,7 +133,7 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
 /* UPLOAD - v2 (client-side E2E): the browser has already encrypted req.file.buffer with AES-256-GCM
    and wrapped the AES key with RSA-OAEP/password-derived keys. The server performs no cryptography
    here at all — it only stores the ciphertext and the already-wrapped key material. */
-const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
+const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) => {
   const {
     iv,
     mimeType,
@@ -163,7 +201,8 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
     owner: req.user.id,
     oneTime: parsedMaxDownloads === 1,
     maxDownloads: parsedMaxDownloads,
-    expiresAt: new Date(Date.now() + expiryMs)
+    expiresAt: new Date(Date.now() + expiryMs),
+    policy
   });
 
   res.json({ fileId: file._id });
@@ -187,7 +226,10 @@ export const getFileMeta = async (req, res) => {
     oneTime: file.oneTime,
     maxDownloads: file.maxDownloads,
     downloadCount: file.downloadCount,
-    limitReached: file.downloadCount >= file.maxDownloads
+    limitReached: file.downloadCount >= file.maxDownloads,
+    // Phase 3: only a boolean flag is exposed here (never the actual allowed countries/IPs/
+    // devices) so an anonymous requester can't enumerate a file's access rules from /meta.
+    hasPolicy: hasActivePolicy(file.policy)
   };
 
   if (file.encryptionVersion === 2) {
@@ -215,6 +257,46 @@ export const getFileMeta = async (req, res) => {
   res.json(meta);
 };
 
+/* Builds the Zero Trust evaluation context for a single download request. The download route is
+   public (no auth middleware - share links must work for anonymous recipients), so any user
+   identity here is best-effort: an Authorization header is decoded if present, but a missing or
+   invalid one just means "anonymous" rather than a rejected request. */
+const buildDownloadContext = async (req, file) => {
+  const ip = getClientIp(req);
+  const country = resolveCountry(req);
+  const deviceId = typeof req.headers["x-device-id"] === "string" ? req.headers["x-device-id"] : undefined;
+  const { browser, operatingSystem } = parseUserAgent(req.headers["user-agent"]);
+  const time = new Date();
+
+  let userId;
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    try {
+      const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch {
+      // Best-effort only: an absent/invalid/expired token just means "anonymous" for policy
+      // purposes, since the download route itself doesn't require authentication.
+    }
+  }
+
+  const context = { ip, country, deviceId, browser, operatingSystem, time, userId };
+
+  if (hasActivePolicy(file.policy)) {
+    if (file.policy.maxDevices > 0) {
+      context.knownDeviceIds = [
+        ...new Set(file.logs.filter((l) => l.decision !== "deny" && l.deviceId).map((l) => l.deviceId))
+      ];
+    }
+    if (file.policy.requireApproval && userId && deviceId) {
+      const device = await Device.findOne({ owner: userId, deviceId, trusted: true, revoked: false });
+      context.deviceTrusted = !!device;
+    }
+  }
+
+  return context;
+};
+
 /* DOWNLOAD */
 export const downloadFile = async (req, res) => {
   const file = await File.findById(req.params.id);
@@ -230,8 +312,41 @@ export const downloadFile = async (req, res) => {
     return res.status(403).json({ error: "download_limit_reached" });
   }
 
-  if (file.encryptionVersion === 2) return downloadFileV2(req, res, file);
-  return downloadFileV1(req, res, file);
+  // Zero Trust (Phase 3): evaluate the file's access policy (if any) before serving a single
+  // byte. A file with no policy configured always evaluates to "allow" (see policyEngine.js) -
+  // this is what keeps every pre-Phase-3 file working exactly as before.
+  const context = await buildDownloadContext(req, file);
+  const policyDecision = evaluateDownloadPolicy(file.policy, context);
+
+  if (policyDecision.decision === "deny") {
+    file.logs.push({
+      ip: context.ip,
+      time: context.time,
+      deviceId: context.deviceId,
+      browser: context.browser,
+      operatingSystem: context.operatingSystem,
+      country: context.country,
+      decision: "deny",
+      denialReason: policyDecision.reason
+    });
+    await file.save();
+
+    SecurityEvent.create({
+      owner: file.owner,
+      type: "download_denied",
+      message: policyDecision.reason,
+      file: file._id,
+      filename: file.filename,
+      deviceId: context.deviceId,
+      ip: context.ip,
+      country: context.country
+    }).catch((e) => console.error("Failed to record security event:", e));
+
+    return res.status(403).json({ error: "policy_denied", reason: policyDecision.reason });
+  }
+
+  if (file.encryptionVersion === 2) return downloadFileV2(req, res, file, context);
+  return downloadFileV1(req, res, file, context);
 };
 
 /* Shared cleanup: destroy the Cloudinary object and auto-revoke once the download limit is hit. */
@@ -250,7 +365,7 @@ const finalizeDownload = async (file) => {
 
 /* DOWNLOAD - legacy (encryptionVersion 1): server decrypts and streams plaintext. Unchanged behavior,
    kept only for backward compatibility with files uploaded before the client-side E2E (v2) migration. */
-const downloadFileV1 = async (req, res, file) => {
+const downloadFileV1 = async (req, res, file, context) => {
   const { password } = req.query;
 
   if (file.passwordHash) {
@@ -262,9 +377,17 @@ const downloadFileV1 = async (req, res, file) => {
 
   // Log download with IP and optional user email (from query)
   const userEmail = typeof req.query.email === "string" ? req.query.email : undefined;
-  const clientIp = getClientIp(req);
-  console.log("Download log - IP:", clientIp, "| Email:", userEmail || "not provided");
-  file.logs.push({ ip: clientIp, userEmail, time: new Date() });
+  console.log("Download log - IP:", context.ip, "| Email:", userEmail || "not provided");
+  file.logs.push({
+    ip: context.ip,
+    userEmail,
+    time: context.time,
+    deviceId: context.deviceId,
+    browser: context.browser,
+    operatingSystem: context.operatingSystem,
+    country: context.country,
+    decision: "allow"
+  });
   await file.save();
 
   try {
@@ -333,12 +456,20 @@ const downloadFileV1 = async (req, res, file) => {
 
 /* DOWNLOAD - v2 (client-side E2E): server never decrypts, it just streams the ciphertext through.
    The browser fetches this alongside GET /file/:id/meta (for iv/wrapped keys) and decrypts locally. */
-const downloadFileV2 = async (req, res, file) => {
+const downloadFileV2 = async (req, res, file, context) => {
   file.downloadCount++;
 
   const userEmail = typeof req.query.email === "string" ? req.query.email : undefined;
-  const clientIp = getClientIp(req);
-  file.logs.push({ ip: clientIp, userEmail, time: new Date() });
+  file.logs.push({
+    ip: context.ip,
+    userEmail,
+    time: context.time,
+    deviceId: context.deviceId,
+    browser: context.browser,
+    operatingSystem: context.operatingSystem,
+    country: context.country,
+    decision: "allow"
+  });
   await file.save();
 
   try {
@@ -389,6 +520,26 @@ export const revokeFile = async (req, res) => {
   await file.save();
 
   res.json({ message: "Revoked" });
+};
+
+/* POLICY (Phase 3, owner-only) - view/edit a file's Zero Trust access policy. */
+export const getFilePolicy = async (req, res) => {
+  const file = await File.findOne({ _id: req.params.id, owner: req.user.id }).select("policy");
+  if (!file) return res.sendStatus(404);
+  res.json(file.policy);
+};
+
+export const updateFilePolicy = async (req, res) => {
+  const file = await File.findOne({ _id: req.params.id, owner: req.user.id });
+  if (!file) return res.sendStatus(404);
+
+  const policy = parsePolicyInput(req.body.policy ?? req.body);
+  if (!policy) return res.status(400).json({ error: "Invalid policy payload" });
+
+  file.policy = policy;
+  await file.save();
+
+  res.json(file.policy);
 };
 
 /* DASHBOARD */
