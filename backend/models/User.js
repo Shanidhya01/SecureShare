@@ -6,8 +6,12 @@ const userSchema = new mongoose.Schema({
   password: String,
 
   // base64 SPKI DER, RSA-OAEP-SHA256 public key generated client-side for zero-knowledge E2E encryption.
-  // The matching private key never leaves the browser (see frontend/lib/keyStore.ts).
-  publicKey: String
+  // The matching private key never leaves the browser (see frontend/lib/crypto/keyStorage.ts).
+  publicKey: String,
+
+  // base64 SPKI DER, ECDSA P-256 public signing key generated client-side (Phase 2: integrity/
+  // authenticity verification). The matching private signing key never leaves the browser either.
+  signingPublicKey: String
 });
 
 export default mongoose.model("User", userSchema);

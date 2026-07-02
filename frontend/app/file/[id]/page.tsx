@@ -13,8 +13,10 @@ import {
   unwrapAESKey,
   unwrapAESKeyWithPassword,
   decryptFile,
+  importSigningPublicKey,
+  verifyEncryptedFileSignature,
 } from "@/lib/crypto/cryptoHelpers";
-import { AlertCircle, Lock, Download, Loader, ShieldCheck, Clock, Ban } from "lucide-react";
+import { AlertCircle, Lock, Download, Loader, ShieldCheck, ShieldAlert, ShieldQuestion, Clock, Ban } from "lucide-react";
 import toast from "react-hot-toast";
 
 type FileMeta = {
@@ -34,7 +36,16 @@ type FileMeta = {
   keySalt?: string | null;
   keyIterations?: number | null;
   passwordKeyIvHint?: string | null;
+  // Phase 2: digital signature fields, all null on unsigned (legacy/Phase 1) v2 files.
+  signature?: string | null;
+  fileHash?: string | null;
+  hashAlgorithm?: string | null;
+  signatureAlgorithm?: string | null;
+  signedAt?: string | null;
+  ownerSigningPublicKey?: string | null;
 };
+
+type SignatureStatus = "idle" | "verifying" | "verified" | "unsigned" | "failed";
 
 /** Distinguishable load-time failure states, driven by the backend's error codes
  *  (not_found / revoked / expired) so the UI can show a specific, meaningful message. */
@@ -52,6 +63,7 @@ export default function FileDownloadPage() {
   const [decryptError, setDecryptError] = useState("");
   const [decrypting, setDecrypting] = useState(false);
   const [showKeyModal, setShowKeyModal] = useState(false);
+  const [signatureStatus, setSignatureStatus] = useState<SignatureStatus>("idle");
 
   const fragmentKey = typeof window !== "undefined" ? window.location.hash : "";
   const hasFragmentKey = fragmentKey.startsWith("#k=");
@@ -115,19 +127,43 @@ export default function FileDownloadPage() {
     if (message === "REVOKED") return "This file's access has been revoked.";
     if (message === "EXPIRED") return "This file has expired.";
     if (message === "NETWORK") return "Network error while fetching the encrypted file. Please try again.";
+    if (message === "TAMPERED") {
+      return "⚠ Signature verification failed - this file may have been tampered with. Download blocked for your safety.";
+    }
     return context === "password"
       ? "Wrong password. Please try again."
       : "Integrity verification failed - the file or key may be corrupted or tampered with.";
+  };
+
+  /** Phase 2: verifies the encrypted file's ECDSA signature (if present) against the uploader's
+   *  public signing key BEFORE decrypting - a forged/tampered ciphertext must never reach
+   *  decryptFile(). Files with no signature (legacy or pre-Phase-2 uploads) are treated as
+   *  "unsigned" and allowed through unblocked, preserving compatibility. */
+  const verifySignature = async (ciphertext: ArrayBuffer): Promise<void> => {
+    if (!meta?.signature || !meta?.ownerSigningPublicKey) {
+      setSignatureStatus("unsigned");
+      return;
+    }
+    setSignatureStatus("verifying");
+    const publicKey = await importSigningPublicKey(meta.ownerSigningPublicKey);
+    const valid = await verifyEncryptedFileSignature(ciphertext, meta.signature, publicKey);
+    if (!valid) {
+      setSignatureStatus("failed");
+      throw new Error("TAMPERED");
+    }
+    setSignatureStatus("verified");
   };
 
   const handleDecryptWithFragment = async () => {
     if (!meta) return;
     setDecrypting(true);
     setDecryptError("");
+    setSignatureStatus("idle");
     try {
       const rawKey = base64UrlToBuf(fragmentKey.slice(3));
       const aesKey = await importAESKeyRaw(rawKey);
       const ciphertext = await fetchCiphertext();
+      await verifySignature(ciphertext); // throws before any decryption if tampered
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
     } catch (err) {
@@ -146,6 +182,7 @@ export default function FileDownloadPage() {
     }
     setDecrypting(true);
     setDecryptError("");
+    setSignatureStatus("idle");
     try {
       const aesKey = await unwrapAESKeyWithPassword(
         meta.wrappedPasswordKey!,
@@ -155,6 +192,7 @@ export default function FileDownloadPage() {
         meta.keyIterations!
       );
       const ciphertext = await fetchCiphertext();
+      await verifySignature(ciphertext);
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
     } catch (err) {
@@ -173,9 +211,11 @@ export default function FileDownloadPage() {
     }
     setDecrypting(true);
     setDecryptError("");
+    setSignatureStatus("idle");
     try {
       const aesKey = await unwrapAESKey(meta.wrappedOwnerKey!, privateKey);
       const ciphertext = await fetchCiphertext();
+      await verifySignature(ciphertext);
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
     } catch (err) {
@@ -279,7 +319,32 @@ export default function FileDownloadPage() {
                 {!meta.limitReached && meta.encryptionVersion === 2 && (
                   <div className="space-y-4">
                     {decrypting && (
-                      <p className="text-center text-blue-300 text-sm">Decrypting file locally in your browser...</p>
+                      <p className="text-center text-blue-300 text-sm">
+                        {signatureStatus === "verifying"
+                          ? "Verifying digital signature..."
+                          : "Decrypting file locally in your browser..."}
+                      </p>
+                    )}
+
+                    {!decrypting && signatureStatus === "verified" && (
+                      <div className="flex items-center justify-center gap-2 text-green-300 text-xs">
+                        <ShieldCheck size={14} />
+                        <span>Signature verified - this file is authentic and unmodified.</span>
+                      </div>
+                    )}
+                    {!decrypting && signatureStatus === "unsigned" && (
+                      <div className="flex items-center justify-center gap-2 text-yellow-300 text-xs">
+                        <ShieldQuestion size={14} />
+                        <span>This file is unsigned (uploaded before signing was available) - integrity was not cryptographically verified.</span>
+                      </div>
+                    )}
+                    {signatureStatus === "failed" && (
+                      <div className="p-3 bg-red-600 bg-opacity-30 border border-red-500 rounded-lg flex items-start gap-2">
+                        <ShieldAlert size={18} className="text-red-300 flex-shrink-0 mt-0.5" />
+                        <p className="text-red-100 text-xs font-semibold">
+                          Tampering detected. This file's signature does not match its content - download blocked.
+                        </p>
+                      </div>
                     )}
 
                     {hasFragmentKey && (

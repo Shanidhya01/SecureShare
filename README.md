@@ -93,7 +93,7 @@ SecureShare/
 │   │   ├── UnlockKeyModal.tsx    # Set-up/unlock prompt for the local RSA key
 │   │   └── ToasterClient.tsx
 │   ├── context/
-│   │   └── CryptoKeyContext.tsx  # Holds the unwrapped private key in memory for the session
+│   │   └── CryptoKeyContext.tsx  # Holds the unwrapped RSA + ECDSA private keys in memory for the session
 │   ├── lib/                      # Utilities & API client
 │   │   ├── api.js
 │   │   ├── ipTracking.ts
@@ -104,7 +104,10 @@ SecureShare/
 │   │       ├── fileEncryption.ts  # encryptFile() / decryptFile() - the only place plaintext exists
 │   │       ├── rsa.ts             # RSA-OAEP-SHA256 keypair + wrapAESKey()/unwrapAESKey()
 │   │       ├── pbkdf2.ts          # PBKDF2-SHA256 password-derived key wrapping
-│   │       └── keyStorage.ts      # Encrypt/decrypt + IndexedDB persistence of the private key
+│   │       ├── keyStorage.ts      # Encrypt/decrypt + IndexedDB persistence of private keys
+│   │       ├── ecdsa.ts           # Phase 2: ECDSA P-256 signing keypair generation + import/export
+│   │       ├── hash.ts            # Phase 2: SHA-256 hashing
+│   │       └── signature.ts       # Phase 2: signEncryptedFile() / verifyEncryptedFileSignature()
 │   ├── styles/                   # Global styles
 │   └── package.json
 │
@@ -187,18 +190,59 @@ Cloudinary (ciphertext only)                    Server never decrypts, never see
 ### Upload flow (client-side)
 1. Browser generates a fresh AES-256-GCM key and encrypts the file locally (`encryptFile`) — plaintext never leaves the device.
 2. The AES key is wrapped with the uploader's own RSA-OAEP public key (`wrapAESKey`), and either embedded in the share link fragment or wrapped with a password-derived key (`wrapAESKeyWithPassword`).
-3. Only the ciphertext, the wrapped key(s), the IV, and metadata are uploaded — the server stores the encrypted blob on Cloudinary as-is, with no server-side cryptography.
+3. **(Phase 2)** The uploader's ECDSA P-256 private signing key signs the encrypted file (`signEncryptedFile`) — see below.
+4. Only the ciphertext, the wrapped key(s), the signature/hash metadata, the IV, and other metadata are uploaded — the server stores the encrypted blob on Cloudinary as-is, with no server-side cryptography.
 
 ### Download flow (client-side)
-1. Browser fetches file metadata (IV, wrapped key(s)) from `GET /files/file/:id/meta` and the encrypted bytes from `GET /files/download/:id`.
-2. The AES key is unwrapped locally — via the fragment key, the share password (`unwrapAESKeyWithPassword`), or the owner's own private key (`unwrapAESKey`, unlocked from IndexedDB with the login password).
-3. The file is decrypted locally with AES-GCM (`decryptFile`) and handed to the browser as a downloadable Blob. AES-GCM's built-in authentication tag doubles as an integrity check — a wrong key, wrong password, or tampered ciphertext all surface as a decryption failure, mapped to a specific in-app error (wrong password / integrity verification failed / missing key / expired / revoked / network failure).
+1. Browser fetches file metadata (IV, wrapped key(s), signature) from `GET /files/file/:id/meta` and the encrypted bytes from `GET /files/download/:id`.
+2. **(Phase 2)** If the file has a signature, the browser verifies it against the uploader's public signing key *before* touching the AES key or attempting decryption — see below. A failed verification aborts the download entirely.
+3. The AES key is unwrapped locally — via the fragment key, the share password (`unwrapAESKeyWithPassword`), or the owner's own private key (`unwrapAESKey`, unlocked from IndexedDB with the login password).
+4. The file is decrypted locally with AES-GCM (`decryptFile`) and handed to the browser as a downloadable Blob. AES-GCM's built-in authentication tag doubles as an integrity check — a wrong key, wrong password, or tampered ciphertext all surface as a decryption failure, mapped to a specific in-app error (wrong password / integrity verification failed / missing key / expired / revoked / network failure).
 
 ### Backward compatibility
-Files uploaded before this migration (`File.encryptionVersion: 1`, the default) keep working exactly as before: server-side AES-256-CBC decryption with a single global RSA-2048 keypair (`backend/utils/legacy/`, `backend/keys/*.pem`). New uploads always use `encryptionVersion: 2` (client-side E2E) — the legacy path exists purely for old links.
+Files uploaded before this migration (`File.encryptionVersion: 1`, the default) keep working exactly as before: server-side AES-256-CBC decryption with a single global RSA-2048 keypair (`backend/utils/legacy/`, `backend/keys/*.pem`). New uploads always use `encryptionVersion: 2` (client-side E2E) — the legacy path exists purely for old links. Digital signatures (Phase 2, below) are an *additive* layer on top of `encryptionVersion: 2` and are entirely optional per file — v2 files uploaded before Phase 2 shipped simply have no `signature`, and the download flow treats that as "unsigned," not an error.
 
 ### Trade-off: device-bound private keys
-Because the RSA private key lives only in the browser's IndexedDB (never on the server), clearing browser storage or switching devices means losing owner-side access to previously uploaded files unless the original share link/password is still known. This is the deliberate cost of true zero-knowledge storage — the server holding a recovery copy of your private key would defeat the purpose.
+Because the RSA private key lives only in the browser's IndexedDB (never on the server), clearing browser storage or switching devices means losing owner-side access to previously uploaded files unless the original share link/password is still known. This is the deliberate cost of true zero-knowledge storage — the server holding a recovery copy of your private key would defeat the purpose. The same trade-off applies identically to the ECDSA signing key introduced in Phase 2.
+
+---
+
+## ✍️ Phase 2: Digital Signatures & Integrity Verification
+
+Phase 1 (above) guarantees **confidentiality** — the server can't read your files. Phase 2 adds **authenticity and integrity**: a recipient can cryptographically prove that a downloaded file was (a) produced by the claimed uploader and (b) not altered in any way since it was signed — *before* spending any effort decrypting it. This closes a gap Phase 1 alone doesn't cover: AES-GCM's authentication tag proves the ciphertext wasn't corrupted *relative to whichever key you're using to decrypt*, but says nothing about who encrypted it in the first place, or whether a malicious actor with write access to storage could have substituted a different ciphertext + matching key material. A digital signature, tied to a specific user's long-lived signing identity, closes that gap.
+
+### Trust model
+- **Identity = signing keypair, not the account itself.** A user's authenticity, from a downloader's perspective, rests entirely on possession of the ECDSA private key that matches the `signingPublicKey` the server reports for that account. The server is trusted to correctly associate a `signingPublicKey` with the right `User` document (i.e., to not lie about whose key is whose) but is **not** trusted with the private key itself, and cannot forge a valid signature.
+- **What a passing verification proves**: the encrypted file bytes are byte-for-byte identical to what was signed, and the signer held the private key matching the public key the server reports for the file's owner at query time.
+- **What it does NOT prove**: that the plaintext content is what the recipient expects (only decryption + inspection tells you that), or that the account itself wasn't compromised at signing time (if an attacker steals a user's *password*, they could unlock that user's signing key too — signing protects against tampering *in transit/at rest*, not against a fully compromised account).
+- **Server compromise**: even a fully malicious server cannot produce a valid signature for a file it tampers with, since it never has the private signing key. It *could* swap out `ownerSigningPublicKey` in the `/meta` response to point at a key it does control — but then the signature would need to have been produced with that same attacker-controlled key, which only helps an attacker who controls the *entire* round trip (metadata AND ciphertext AND signature), a strictly harder attack than tampering with ciphertext alone. This is a known limitation of any system where the verification key is fetched from the same server being defended against; a future hardening step (see below) would be pinning/out-of-band key verification.
+
+### Key model (Phase 2 addition)
+- **Per-user ECDSA P-256 signing keypair**, entirely separate from the RSA-OAEP encryption keypair (`generateSigningKeyPair` in `frontend/lib/crypto/ecdsa.ts`) — encryption and signing keys are never shared, since mixing their use case weakens both.
+- Generated client-side, at the same moment as the RSA keypair (registration, or lazily backfilled on next unlock for accounts created before Phase 2 shipped).
+- The public signing key is uploaded to the server (`User.signingPublicKey`, `PATCH /api/users/signingkey`).
+- The private signing key is encrypted with the **same password-derived-key mechanism** already used for the RSA private key (PBKDF2-SHA256 → AES-GCM, `encryptPrivateKey`/`decryptPrivateKeyBytes` in `keyStorage.ts`) and stored **only in the browser's IndexedDB**, alongside the RSA key material, in the same per-user record.
+
+### Verification workflow
+1. **Sign (upload)**: after AES-GCM-encrypting the file, the browser computes `SHA-256(ciphertext)` and signs the ciphertext with `crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, signingPrivateKey, ciphertext)`. (The Web Crypto API's ECDSA sign/verify always hashes its input per the `hash` parameter — there's no separate "sign this already-computed digest" primitive — so signing the ciphertext with `hash: "SHA-256"` *is* signing SHA-256(ciphertext); a manually-computed `fileHash` is stored alongside purely as human-readable/audit metadata, and is never itself trusted as the basis for verification.)
+2. **Upload**: `signature`, `fileHash`, `hashAlgorithm` ("SHA-256"), `signatureAlgorithm` ("ECDSA-P256-SHA256"), and `signedAt` are sent to the server alongside the existing ciphertext/wrapped-key/IV fields and stored on the `File` document.
+3. **Fetch (download)**: the browser retrieves `signature` + the uploader's `ownerSigningPublicKey` from `GET /files/file/:id/meta`, and the ciphertext from `GET /files/download/:id`.
+4. **Verify BEFORE decrypt**: `verifyEncryptedFileSignature` (in `signature.ts`) calls `crypto.subtle.verify(...)` over the downloaded ciphertext. This happens strictly before the AES key is ever unwrapped or used — a failed check means the file is never decrypted, full stop.
+5. **Outcome**:
+   - ✅ **Verified** — signature valid, proceed to decrypt normally. UI shows "Signature verified — this file is authentic and unmodified."
+   - ⚠️ **Tampering detected** — signature present but invalid. Download is **blocked entirely**; UI shows a red tampering warning and the decrypt flow aborts (`TAMPERED` error).
+   - ℹ️ **Unsigned** — no signature on this file (legacy `encryptionVersion: 1`, or a Phase-1-only `encryptionVersion: 2` upload). Decryption proceeds as before Phase 2 existed; UI shows a neutral "unsigned, integrity not cryptographically verified" notice rather than blocking, preserving full backward compatibility.
+
+### New crypto modules
+- **`frontend/lib/crypto/ecdsa.ts`** — ECDSA P-256 keypair generation, public/private key import-export, `decryptSigningPrivateKey`.
+- **`frontend/lib/crypto/hash.ts`** — standalone SHA-256 hashing (`sha256`, `sha256Base64`).
+- **`frontend/lib/crypto/signature.ts`** — the high-level `signEncryptedFile`/`verifyEncryptedFileSignature` pair that upload/download pages call directly, combining the two modules above.
+
+### UI feedback
+The upload page shows a "Signing file (ECDSA P-256)..." progress step during signing and a "Digitally signed" badge on success (or an "uploaded without a signature" notice if the local signing key isn't set up yet). The download page shows a "Verifying digital signature..." step before decryption begins, followed by one of: a green "Signature verified" badge, a red blocking tampering warning, or a neutral "unsigned file" notice.
+
+### Known limitation & future hardening
+As noted in the trust model, the signing public key used for verification is fetched from the same server whose compromise this feature partly defends against. A fully hardened design would let users independently verify each other's signing public keys out-of-band (e.g., a key fingerprint displayed on each user's profile that recipients can cross-check via a side channel) — this is a natural next step, not yet implemented.
 
 ### Authentication
 - **Registration**: Email & password → bcryptjs hashing (salt rounds: 10)
@@ -377,6 +421,8 @@ docker-compose down
 |--------|----------|-------------|---|
 | `PATCH` | `/publickey` | Set/update your RSA-OAEP public key (base64 SPKI) | Yes |
 | `GET` | `/publickey` | Get your own stored public key | Yes |
+| `PATCH` | `/signingkey` | Set/update your ECDSA P-256 signing public key (base64 SPKI, Phase 2) | Yes |
+| `GET` | `/signingkey` | Get your own stored signing public key | Yes |
 
 **Upload Request:**
 ```json
@@ -525,6 +571,7 @@ docker run -p 3000:3000 secureshare-frontend
   email: String (unique),
   password: String (hashed),
   publicKey: String, // base64 SPKI RSA-OAEP-SHA256 public key, generated client-side (E2E encryption)
+  signingPublicKey: String, // base64 SPKI ECDSA P-256 public key, generated client-side (Phase 2 signing)
   createdAt: Timestamp,
   updatedAt: Timestamp
 }
@@ -545,6 +592,14 @@ docker run -p 3000:3000 secureshare-frontend
   encryptedKey: String (Base64),   // AES key RSA-wrapped with the global server keypair
   iv: String (Base64),             // 16-byte CBC IV (v1) or 12-byte GCM IV (v2 — same field, reused)
   passwordHash: String (optional), // bcrypt hash, v1 only
+
+  // Phase 2 fields — optional, present only if the uploader signed the file. Absence means
+  // "unsigned" (legacy or pre-Phase-2 upload), not an error.
+  signature: String,          // base64 ECDSA signature over the ciphertext
+  fileHash: String,           // base64 SHA-256 digest of the ciphertext (informational only)
+  hashAlgorithm: String,      // "SHA-256"
+  signatureAlgorithm: String, // "ECDSA-P256-SHA256"
+  signedAt: Date,
 
   // v2 (client-side E2E) fields — server never sees the raw AES key
   wrappedOwnerKey: String,         // AES key wrapped with the owner's own RSA-OAEP public key
@@ -660,6 +715,9 @@ For issues, questions, or suggestions:
 **Q: Can the SecureShare server read my files?**
 - A: No, not for files uploaded after this migration. Encryption and decryption happen entirely in your browser; the server only ever stores ciphertext and RSA/password-wrapped keys.
 
+**Q: How does SecureShare know a file hasn't been tampered with?**
+- A: Files uploaded with Phase 2 (digital signatures) are signed client-side with the uploader's ECDSA P-256 private key over a SHA-256 hash of the encrypted file. Downloaders verify that signature against the uploader's public signing key *before* decrypting — see [Phase 2: Digital Signatures & Integrity Verification](#️-phase-2-digital-signatures--integrity-verification). Files without a signature (legacy, or uploaded before Phase 2) are treated as unsigned, not tampered — signing is additive, not required.
+
 **Q: How many users can the system handle?**
 - A: Depends on infrastructure. MongoDB Atlas can scale horizontally. Consider load balancing for production.
 
@@ -681,8 +739,10 @@ Planned features and improvements:
 - [ ] Webhooks for integrations
 - [ ] Mobile app (React Native)
 - [x] End-to-end encryption on client side
+- [x] Digital signatures / integrity verification (Phase 2 — ECDSA P-256)
 - [ ] Social sharing options
-- [ ] Multi-device sync for the local RSA private key (currently device-bound, see architecture doc above)
+- [ ] Multi-device sync for the local RSA/ECDSA private keys (currently device-bound, see architecture doc above)
+- [ ] Out-of-band signing-key verification (key fingerprints/pinning), to remove trust in the server for key distribution (see Phase 2's "known limitation")
 
 ---
 

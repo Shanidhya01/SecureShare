@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 
 export const register = async (req, res) => {
   try {
-    const { name, email, password, publicKey } = req.body;
+    const { name, email, password, publicKey, signingPublicKey } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: "Name, email, and password are required" });
@@ -21,7 +21,9 @@ export const register = async (req, res) => {
       email: email.toLowerCase().trim(),
       password: hashed,
       // Optional: base64 SPKI RSA-OAEP public key generated client-side for E2E encryption.
-      publicKey: typeof publicKey === "string" && publicKey.length > 0 ? publicKey : undefined
+      publicKey: typeof publicKey === "string" && publicKey.length > 0 ? publicKey : undefined,
+      // Optional: base64 SPKI ECDSA P-256 public signing key generated client-side (Phase 2).
+      signingPublicKey: typeof signingPublicKey === "string" && signingPublicKey.length > 0 ? signingPublicKey : undefined
     });
 
     res.status(201).json({ message: "Registered" });

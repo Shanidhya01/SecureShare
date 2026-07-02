@@ -1,6 +1,7 @@
 /**
- * Private-key-at-rest handling: encrypting/decrypting a user's RSA private key with a
- * password-derived key, and persisting the resulting (still-encrypted) blob in IndexedDB.
+ * Private-key-at-rest handling: encrypting/decrypting a user's private keys (RSA encryption key,
+ * ECDSA signing key) with a password-derived key, and persisting the resulting (still-encrypted)
+ * blobs in IndexedDB.
  *
  * The plaintext private key exists only in memory for as long as it's in use - it is NEVER
  * written to localStorage and NEVER sent over the network. Only the AES-GCM-encrypted blob
@@ -15,20 +16,31 @@ const STORE_NAME = "privateKeys";
 
 export type StoredKeyRecord = {
   email: string;
+  // RSA-OAEP encryption keypair (Phase 1)
   wrappedPrivateKey: string;
   salt: string;
   iv: string;
   iterations: number;
   publicKeyBase64: string;
+  // ECDSA P-256 signing keypair (Phase 2) - optional so Phase 1 records remain valid;
+  // CryptoKeyContext lazily backfills these fields on next unlock for pre-Phase-2 accounts.
+  wrappedSigningPrivateKey?: string;
+  signingSalt?: string;
+  signingIv?: string;
+  signingIterations?: number;
+  signingPublicKeyBase64?: string;
   createdAt: number;
 };
 
 // ---------------------------------------------------------------------------
-// Encrypt/decrypt the private key bytes (PBKDF2-SHA256 -> AES-GCM)
+// Encrypt/decrypt private key bytes (PBKDF2-SHA256 -> AES-GCM). Algorithm-agnostic - works
+// for any CryptoKey exportable as PKCS8 (RSA-OAEP or ECDSA), since the wrap/unwrap step only
+// ever operates on the exported byte string, not the key's algorithm.
 // ---------------------------------------------------------------------------
 
-/** Encrypts a user's RSA private key (exported as PKCS8) with an AES-GCM key derived from
- *  their login password, so it can be safely persisted in IndexedDB. */
+/** Encrypts a private key (exported as PKCS8) with an AES-GCM key derived from the user's
+ *  login password, so it can be safely persisted in IndexedDB. Works for any private key type
+ *  (RSA-OAEP, ECDSA, ...) since PKCS8 export/import is algorithm-agnostic at this layer. */
 export async function encryptPrivateKey(
   privateKey: CryptoKey,
   loginPassword: string,
@@ -47,7 +59,24 @@ export async function encryptPrivateKey(
   };
 }
 
-/** Reverses encryptPrivateKey given the login password re-entered by the user ("unlock"). */
+/** Reverses encryptPrivateKey, returning the raw decrypted PKCS8 bytes (not yet imported into
+ *  a CryptoKey) so callers can import it with whichever algorithm the key actually is - see
+ *  decryptPrivateKey (RSA-OAEP) below and ecdsa.ts's decryptSigningPrivateKey (ECDSA). */
+export async function decryptPrivateKeyBytes(
+  wrappedPrivateKeyBase64: string,
+  loginPassword: string,
+  saltBase64: string,
+  ivBase64: string,
+  iterations: number
+): Promise<ArrayBuffer> {
+  const salt = base64ToBuf(saltBase64);
+  const iv = base64ToBuf(ivBase64);
+  const derivedKey = await deriveKeyPBKDF2(loginPassword, salt, iterations, ["encrypt", "decrypt"]);
+  return crypto.subtle.decrypt({ name: "AES-GCM", iv }, derivedKey, base64ToBuf(wrappedPrivateKeyBase64));
+}
+
+/** Reverses encryptPrivateKey for the RSA-OAEP encryption keypair specifically, given the login
+ *  password re-entered by the user ("unlock"). */
 export async function decryptPrivateKey(
   wrappedPrivateKeyBase64: string,
   loginPassword: string,
@@ -55,10 +84,7 @@ export async function decryptPrivateKey(
   ivBase64: string,
   iterations: number
 ): Promise<CryptoKey> {
-  const salt = base64ToBuf(saltBase64);
-  const iv = base64ToBuf(ivBase64);
-  const derivedKey = await deriveKeyPBKDF2(loginPassword, salt, iterations, ["encrypt", "decrypt"]);
-  const pkcs8 = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, derivedKey, base64ToBuf(wrappedPrivateKeyBase64));
+  const pkcs8 = await decryptPrivateKeyBytes(wrappedPrivateKeyBase64, loginPassword, saltBase64, ivBase64, iterations);
   return crypto.subtle.importKey("pkcs8", pkcs8, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["unwrapKey"]);
 }
 

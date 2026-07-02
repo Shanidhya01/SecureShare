@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert } from "lucide-react";
 import toast from "react-hot-toast";
 import Navbar from "@/components/Navbar";
 import {
@@ -14,6 +14,7 @@ import {
   importPublicKey,
   bufToBase64,
   bufToBase64Url,
+  signEncryptedFile,
 } from "@/lib/crypto/cryptoHelpers";
 import { useCryptoKey } from "@/context/CryptoKeyContext";
 import UnlockKeyModal from "@/components/UnlockKeyModal";
@@ -32,9 +33,10 @@ export default function UploadFile() {
   const [shareLink, setShareLink] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
   const [showKeyModal, setShowKeyModal] = useState(false);
+  const [signingStatus, setSigningStatus] = useState<"idle" | "signing" | "signed" | "unsigned">("idle");
   const router = useRouter();
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  const { needsSetup, isUnlocked, checking: checkingKey } = useCryptoKey();
+  const { needsSetup, isUnlocked, signingPrivateKey, checking: checkingKey } = useCryptoKey();
 
   useEffect(() => {
     if (!token) {
@@ -141,6 +143,7 @@ export default function UploadFile() {
     setUploading(true);
     setError("");
     setUploadProgress(0);
+    setSigningStatus("idle");
 
     // Simulate progress for better UX (actual progress can be tracked with axios)
     const progressInterval = setInterval(() => {
@@ -160,6 +163,7 @@ export default function UploadFile() {
       let wrappedOwnerKey: string;
       let passwordWrap: { wrapped: string; salt: string; iv: string; iterations: number } | null = null;
       let fragmentKeyBase64Url: string | null = null;
+      let fileSignature: Awaited<ReturnType<typeof signEncryptedFile>> | null = null;
 
       try {
         const aesKey = await generateAESKey();
@@ -185,6 +189,18 @@ export default function UploadFile() {
           const raw = await exportAESKeyRaw(aesKey);
           fragmentKeyBase64Url = bufToBase64Url(raw);
         }
+
+        // Phase 2: sign the encrypted file (hash + ECDSA signature) so downloaders can verify
+        // authenticity/integrity before decrypting. Signing key may be missing for accounts
+        // mid-upgrade (see CryptoKeyContext's lazy backfill) - upload still proceeds unsigned
+        // rather than blocking, preserving compatibility with the Phase 1 flow.
+        if (signingPrivateKey) {
+          setSigningStatus("signing");
+          fileSignature = await signEncryptedFile(ciphertext, signingPrivateKey);
+          setSigningStatus("signed");
+        } else {
+          setSigningStatus("unsigned");
+        }
       } catch (cryptoErr: any) {
         clearInterval(progressInterval);
         console.error("Client-side encryption failed:", cryptoErr);
@@ -194,7 +210,7 @@ export default function UploadFile() {
         return;
       }
 
-      // --- 2. Upload only ciphertext + wrapped keys + metadata; raw key never included ---
+      // --- 2. Upload only ciphertext + wrapped keys + signature + metadata; raw key never included ---
       const formData = new FormData();
       formData.append("file", new Blob([ciphertext]), file.name);
       formData.append("encryptionVersion", "2");
@@ -207,6 +223,13 @@ export default function UploadFile() {
         formData.append("keySalt", passwordWrap.salt);
         formData.append("passwordKeyIvHint", passwordWrap.iv);
         formData.append("keyIterations", String(passwordWrap.iterations));
+      }
+      if (fileSignature) {
+        formData.append("signature", fileSignature.signature);
+        formData.append("fileHash", fileSignature.fileHash);
+        formData.append("hashAlgorithm", fileSignature.hashAlgorithm);
+        formData.append("signatureAlgorithm", fileSignature.signatureAlgorithm);
+        formData.append("signedAt", fileSignature.signedAt);
       }
       formData.append("maxDownloads", maxDownloads);
       formData.append("expiryHours", expiryHours);
@@ -339,6 +362,17 @@ export default function UploadFile() {
                     </button>
                   </div>
                 )}
+                {signingStatus === "signed" ? (
+                  <div className="mt-3 flex items-center gap-2 text-green-300 text-xs">
+                    <ShieldCheck size={14} />
+                    <span>Digitally signed (ECDSA P-256) - recipients can verify this file wasn&apos;t tampered with.</span>
+                  </div>
+                ) : signingStatus === "unsigned" ? (
+                  <div className="mt-3 flex items-center gap-2 text-yellow-300 text-xs">
+                    <ShieldAlert size={14} />
+                    <span>Uploaded without a digital signature - your signing key isn&apos;t set up on this device yet.</span>
+                  </div>
+                ) : null}
                 <button
                   onClick={() => router.push("/dashboard")}
                   className="mt-3 text-green-300 text-xs font-semibold hover:text-green-200 transition-colors"
@@ -470,7 +504,9 @@ export default function UploadFile() {
             {uploading && (
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-slate-300 font-semibold text-sm">Uploading...</p>
+                  <p className="text-slate-300 font-semibold text-sm">
+                    {signingStatus === "signing" ? "Signing file (ECDSA P-256)..." : "Uploading..."}
+                  </p>
                   <p className="text-blue-400 font-semibold text-sm">{Math.round(uploadProgress)}%</p>
                 </div>
                 <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">

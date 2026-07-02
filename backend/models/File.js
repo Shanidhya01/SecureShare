@@ -23,6 +23,14 @@ const fileSchema = new mongoose.Schema({
   keyIterations: { type: Number, default: 210000 },
   passwordKeyIvHint: String,        // base64 IV used for the AES-GCM wrap of wrappedPasswordKey itself
 
+  // Phase 2: digital signature over the encrypted file, for integrity/authenticity verification.
+  // Optional - absent on legacy (v1) and pre-Phase-2 (v2) files, which remain downloadable unsigned.
+  signature: String,                // base64 ECDSA signature, computed over the ciphertext bytes
+  fileHash: String,                 // base64 SHA-256 hash of the ciphertext, informational (recomputed client-side for verification, never trusted from the server)
+  hashAlgorithm: String,            // e.g. "SHA-256"
+  signatureAlgorithm: String,       // e.g. "ECDSA-P256-SHA256"
+  signedAt: Date,
+
   owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
   passwordHash: String,

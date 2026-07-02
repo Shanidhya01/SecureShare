@@ -4,7 +4,14 @@ import api from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail, User, AlertCircle, CheckCircle, Loader, ArrowRight } from "lucide-react";
 import toast from "react-hot-toast";
-import { encryptPrivateKey, exportPublicKey, generateRSAKeyPair, savePrivateKeyIndexedDB } from "@/lib/crypto/cryptoHelpers";
+import {
+  encryptPrivateKey,
+  exportPublicKey,
+  generateRSAKeyPair,
+  savePrivateKeyIndexedDB,
+  generateSigningKeyPair,
+  exportSigningPublicKey,
+} from "@/lib/crypto/cryptoHelpers";
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -76,19 +83,26 @@ export default function Register() {
     try {
       const { confirmPassword, ...registerData } = form;
 
-      // Generate this account's E2E encryption keypair while the plaintext password is still
-      // available in memory - this is the only point after account creation where we have it
-      // without asking the user to re-enter it. The private key is wrapped with this password
-      // and only ever leaves this function to be stored locally (IndexedDB); the public key
-      // is submitted alongside registration so the server can store it for other people to
-      // encrypt files to this user.
+      // Generate this account's E2E encryption keypair (RSA-OAEP) AND its digital-signing
+      // keypair (ECDSA P-256, Phase 2) while the plaintext password is still available in
+      // memory - this is the only point after account creation where we have it without
+      // asking the user to re-enter it. Both private keys are wrapped with this password and
+      // only ever leave this function to be stored locally (IndexedDB); both public keys are
+      // submitted alongside registration.
       let keyPair: CryptoKeyPair;
       let publicKeyBase64: string;
       let wrappedPrivateKey: { wrappedPrivateKey: string; salt: string; iv: string; iterations: number };
+      let signingKeyPair: CryptoKeyPair;
+      let signingPublicKeyBase64: string;
+      let wrappedSigningPrivateKey: { wrappedPrivateKey: string; salt: string; iv: string; iterations: number };
       try {
         keyPair = await generateRSAKeyPair();
         publicKeyBase64 = await exportPublicKey(keyPair.publicKey);
         wrappedPrivateKey = await encryptPrivateKey(keyPair.privateKey, form.password);
+
+        signingKeyPair = await generateSigningKeyPair();
+        signingPublicKeyBase64 = await exportSigningPublicKey(signingKeyPair.publicKey);
+        wrappedSigningPrivateKey = await encryptPrivateKey(signingKeyPair.privateKey, form.password);
       } catch (cryptoErr) {
         console.error("Encryption setup failed:", cryptoErr);
         setErrors({ submit: "Failed to set up encryption on this device. Please try again." });
@@ -96,13 +110,22 @@ export default function Register() {
         return;
       }
 
-      await api.post("/auth/register", { ...registerData, publicKey: publicKeyBase64 });
+      await api.post("/auth/register", {
+        ...registerData,
+        publicKey: publicKeyBase64,
+        signingPublicKey: signingPublicKeyBase64,
+      });
 
-      // Only persist the wrapped private key locally after registration succeeded, to avoid
+      // Only persist the wrapped private keys locally after registration succeeded, to avoid
       // orphaning a local keypair for an account that was never actually created.
       await savePrivateKeyIndexedDB(form.email.toLowerCase().trim(), {
         ...wrappedPrivateKey,
         publicKeyBase64,
+        wrappedSigningPrivateKey: wrappedSigningPrivateKey.wrappedPrivateKey,
+        signingSalt: wrappedSigningPrivateKey.salt,
+        signingIv: wrappedSigningPrivateKey.iv,
+        signingIterations: wrappedSigningPrivateKey.iterations,
+        signingPublicKeyBase64,
         createdAt: Date.now(),
       });
 

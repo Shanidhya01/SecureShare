@@ -104,7 +104,12 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
     wrappedPasswordKey,
     keySalt,
     keyIterations,
-    passwordKeyIvHint
+    passwordKeyIvHint,
+    signature,
+    fileHash,
+    hashAlgorithm,
+    signatureAlgorithm,
+    signedAt
   } = req.body;
 
   if (!iv || !wrappedOwnerKey) {
@@ -115,6 +120,13 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
   const hasPasswordFields = wrappedPasswordKey || keySalt || passwordKeyIvHint;
   if (hasPasswordFields && !(wrappedPasswordKey && keySalt && passwordKeyIvHint)) {
     return res.status(400).json({ error: "Incomplete password-protected key material" });
+  }
+
+  // Phase 2 signing is optional (preserves compatibility with pre-Phase-2 clients) but all-or-nothing
+  // when present - a signature without its hash/algorithm metadata can't be verified meaningfully.
+  const hasSignatureFields = signature || fileHash || hashAlgorithm || signatureAlgorithm;
+  if (hasSignatureFields && !(signature && fileHash && hashAlgorithm && signatureAlgorithm)) {
+    return res.status(400).json({ error: "Incomplete signature metadata" });
   }
 
   const owner = await User.findById(req.user.id).select("publicKey");
@@ -143,6 +155,11 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
     keySalt: keySalt || undefined,
     keyIterations: keyIterations ? parseInt(keyIterations) : undefined,
     passwordKeyIvHint: passwordKeyIvHint || undefined,
+    signature: signature || undefined,
+    fileHash: fileHash || undefined,
+    hashAlgorithm: hashAlgorithm || undefined,
+    signatureAlgorithm: signatureAlgorithm || undefined,
+    signedAt: signedAt ? new Date(signedAt) : undefined,
     owner: req.user.id,
     oneTime: parsedMaxDownloads === 1,
     maxDownloads: parsedMaxDownloads,
@@ -155,7 +172,7 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs }) => {
 /* METADATA - lightweight, no auth, no download-count bump, no log write. Lets the frontend fetch
    everything it needs to unwrap/decrypt a v2 file before pulling the (potentially large) ciphertext. */
 export const getFileMeta = async (req, res) => {
-  const file = await File.findById(req.params.id);
+  const file = await File.findById(req.params.id).populate("owner", "signingPublicKey");
   if (!file) return res.status(404).json({ error: "not_found" });
   if (file.revoked) return res.status(410).json({ error: "revoked" });
   if (file.expiresAt && file.expiresAt.getTime() < Date.now()) {
@@ -182,7 +199,16 @@ export const getFileMeta = async (req, res) => {
       wrappedPasswordKey: file.wrappedPasswordKey || null,
       keySalt: file.keySalt || null,
       keyIterations: file.keyIterations || null,
-      passwordKeyIvHint: file.passwordKeyIvHint || null
+      passwordKeyIvHint: file.passwordKeyIvHint || null,
+      // Phase 2: signature is only present/verifiable if the uploader signed this file AND
+      // still has a signing public key on record. Absence of either means "unsigned" - the
+      // download flow treats that as a compatibility case, not an error.
+      signature: file.signature || null,
+      fileHash: file.fileHash || null,
+      hashAlgorithm: file.hashAlgorithm || null,
+      signatureAlgorithm: file.signatureAlgorithm || null,
+      signedAt: file.signedAt || null,
+      ownerSigningPublicKey: file.owner?.signingPublicKey || null
     });
   }
 

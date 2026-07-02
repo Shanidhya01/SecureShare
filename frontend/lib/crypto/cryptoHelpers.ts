@@ -16,8 +16,16 @@
  * - Each user's own RSA private key is wrapped with a PBKDF2-derived key from their login
  *   password and stored only in IndexedDB (keyStorage.ts) - never uploaded anywhere.
  *
+ * Phase 2 adds digital signatures for integrity/authenticity, layered on top of the above
+ * without changing it: every user also has a separate ECDSA P-256 signing keypair (ecdsa.ts),
+ * generated and stored the same way as the RSA keypair. Every upload is signed (signature.ts,
+ * using hash.ts for SHA-256), and every download verifies that signature before decrypting -
+ * a failed verification blocks decryption entirely, since it means the ciphertext or its
+ * signature was tampered with or doesn't match the claimed uploader.
+ *
  * Other modules should generally import from here rather than reaching into the individual
- * aes.ts/rsa.ts/pbkdf2.ts/fileEncryption.ts/keyStorage.ts files directly.
+ * aes.ts/rsa.ts/pbkdf2.ts/fileEncryption.ts/keyStorage.ts/ecdsa.ts/hash.ts/signature.ts files
+ * directly.
  */
 
 export * from "./base64";
@@ -26,3 +34,6 @@ export * from "./fileEncryption";
 export * from "./rsa";
 export * from "./pbkdf2";
 export * from "./keyStorage";
+export * from "./ecdsa";
+export * from "./hash";
+export * from "./signature";
