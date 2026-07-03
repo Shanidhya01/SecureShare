@@ -385,6 +385,78 @@ This document describes manual (and where noted, scriptable) test procedures for
 
 ---
 
+## Phase 5 Tests — Data Loss Prevention (DLP)
+
+### 5.1 Detector Coverage (automated)
+
+**Purpose**: Confirm each detector module correctly identifies its target pattern and rejects obvious non-matches.
+
+**How to run**: `cd backend && npm test` (uses Node's built-in `node --test` runner against `backend/tests/dlp.test.js` — no extra dependency required).
+
+**Expected Result**: All cases pass, including: email detection, Luhn-validated vs. Luhn-invalid credit card numbers, AWS access key matching, PEM private key block matching, `.env` secret detection with placeholder-value filtering, and mask-value never returning the raw input.
+
+**Pass Criteria**: `npm test` exits 0 with all assertions passing; any failure indicates a regression in a detector or the policy engine and should block a release.
+
+### 5.2 Binary File Skipping
+
+**Purpose**: Confirm binary/unsupported files are skipped gracefully rather than scanned (or crashing the scan).
+
+**Steps**: Upload a `.png`, `.exe`, or `.zip` file via `POST /api/dlp/scan`.
+
+**Expected Result**: Response has `supported: false`, `decision: "allow"`, `findings: []` — the upload proceeds without any content inspection.
+
+**Pass Criteria**: No error, no false-positive findings, `dlpStatus` on the resulting `File` doc is `"skipped"`.
+
+### 5.3 Policy Decision Escalation
+
+**Purpose**: Confirm the configured policy (`backend/services/dlp/dlpPolicyConfig.js`) resolves the documented decision for each severity/detector combination.
+
+**Steps**: Upload text files individually containing: (a) only an email address, (b) a phone number, (c) an Aadhaar-shaped number, (d) a PEM private key, (e) both an email and an AWS secret key together.
+
+| Content | Expected Decision |
+|---|---|
+| Email only | `allow` |
+| Phone number only | `warn` |
+| Aadhaar-shaped number only | `require_approval` |
+| PEM private key | `block` |
+| Email + AWS secret key together | `block` (most severe finding wins) |
+
+**Expected Result**: Each row's `decision` in the `POST /api/dlp/scan` response matches the table.
+
+**Pass Criteria**: All five cases match; any mismatch indicates a regression in `dlpPolicyConfig.js`'s `resolveDecision()`.
+
+### 5.4 Upload Blocking
+
+**Purpose**: Confirm a `block` decision actually prevents the file from being encrypted/stored, not just flagged.
+
+**Steps**: Upload a file containing a hardcoded password assignment (e.g. `password = "hunter22"`) via the normal upload flow (v2 zero-knowledge path).
+
+**Expected Result**: `POST /api/dlp/scan` returns `decision: "block"`; the frontend refuses to proceed to encryption/upload; if `POST /api/files/upload` is called directly with the blocked `dlpScanId` anyway, the server independently rejects it with HTTP 422.
+
+**Pass Criteria**: No `File` document is created in either case — the block holds even if the client-side gate is bypassed.
+
+### 5.5 Require-Approval Acknowledgment Flow
+
+**Purpose**: Confirm a `require_approval` finding can be explicitly overridden, and that the override is one-time and audited.
+
+**Steps**: Upload a file containing a JWT-shaped token. Confirm the upload is held pending approval. Call `POST /api/dlp/scans/:id/acknowledge`. Retry the upload with the same `dlpScanId`.
+
+**Expected Result**: The upload succeeds after acknowledgment; the resulting `File.dlpDecision` is `"require_approval"` (preserved as an audit trail, not silently changed to `"allow"`); attempting to reuse the same `dlpScanId` for a second upload fails with "already been used for another upload".
+
+**Pass Criteria**: Upload only succeeds after the explicit acknowledge call; replay is rejected.
+
+### 5.6 Audit Log Integration
+
+**Purpose**: Confirm DLP outcomes are recorded in the security activity feed.
+
+**Steps**: Trigger a `block` decision and a `warn` decision via separate uploads. Check `GET /api/security/events`.
+
+**Expected Result**: A `dlp_blocked` event appears for the blocked upload and a `dlp_warning` (or `dlp_sensitive_data_detected`) event appears for the warned one, each with the correct filename.
+
+**Pass Criteria**: Both event types appear with accurate `type`/`message`/`filename` fields.
+
+---
+
 ## Running these tests as part of CI (future work)
 
-None of the above are currently automated. A reasonable first step would be converting the pure-function tests (2.5, 4.8, and the policy engine cases in 3.6-3.9) into a Jest/Vitest suite targeting `backend/services/riskEngine.js` and `backend/services/policyEngine.js` directly, since both are dependency-free pure functions designed for exactly this. The end-to-end tests (uploads, downloads, UI state) would need a browser automation tool (Playwright/Cypress) and are a larger investment — see the Roadmap in [README.md](README.md).
+Phase 5's detector/policy-engine layer (§5.1) is the first automated coverage in this repo, run via `cd backend && npm test` (Node's built-in test runner, no new dependency). Extending this to the remaining pure-function tests (2.5, 4.8, and the policy engine cases in 3.6-3.9) by targeting `backend/services/riskEngine.js` and `backend/services/policyEngine.js` directly (both dependency-free pure functions, same shape as the DLP engine) is a natural next step. The end-to-end tests (uploads, downloads, UI state, §5.2-5.6) would need a browser automation tool (Playwright/Cypress) and are a larger investment — see the Roadmap in [README.md](README.md).

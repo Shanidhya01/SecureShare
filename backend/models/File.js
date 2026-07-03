@@ -49,6 +49,14 @@ const fileSchema = new mongoose.Schema({
   riskLevel: { type: String, enum: ["Low", "Medium", "High", "Critical"], default: null },
   quarantined: { type: Boolean, default: false },
 
+  // Phase 5: DLP scan result, mirrored from the DLPScan doc referenced by dlpScanId at upload
+  // time - same denormalization pattern as the Phase 4 fields above. Absent/"not_scanned" on
+  // every file uploaded before Phase 5, which remain downloadable exactly as before.
+  dlpScanId: { type: mongoose.Schema.Types.ObjectId, ref: "DLPScan", default: null },
+  dlpStatus: { type: String, enum: ["not_scanned", "pending", "completed", "failed", "skipped"], default: "not_scanned" },
+  dlpRisk: { type: String, enum: ["None", "Low", "Medium", "High", "Critical"], default: null },
+  dlpDecision: { type: String, enum: ["allow", "warn", "require_approval", "block"], default: null },
+
   // Phase 3: Zero Trust access policy. Every field is optional/empty by default, so files with
   // no policy configured behave exactly as before (backend/services/policyEngine.js treats an
   // all-empty policy as "no restrictions, allow"). Evaluated on every download attempt.

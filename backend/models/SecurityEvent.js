@@ -10,7 +10,11 @@ const securityEventSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ["new_device", "device_removed", "session_revoked", "download_denied", "file_quarantined"]
+    enum: [
+      "new_device", "device_removed", "session_revoked", "download_denied", "file_quarantined",
+      // Phase 5: DLP scan outcomes worth surfacing in the security activity feed.
+      "dlp_blocked", "dlp_warning", "dlp_sensitive_data_detected"
+    ]
   },
   message: String,
 

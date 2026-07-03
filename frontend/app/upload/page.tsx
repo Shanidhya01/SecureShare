@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2, ScanSearch, Bug } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2, ScanSearch, Bug, Eye } from "lucide-react";
 import toast from "react-hot-toast";
 import Navbar from "@/components/Navbar";
 import {
@@ -39,6 +39,17 @@ export default function UploadFile() {
   // server sees unencrypted bytes (scoped to this single request, never persisted).
   const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "clean" | "flagged" | "blocked">("idle");
   const [scanResult, setScanResult] = useState<any>(null);
+  // Phase 5: DLP scan, run right after the malware scan and before encryption - see
+  // backend/controllers/dlp.controller.js for why this is also a deliberate, scoped exception
+  // to the zero-knowledge model. Only supported (text-based) files are actually inspected;
+  // binary files are skipped gracefully and always come back as "allow".
+  const [dlpStatus, setDlpStatus] = useState<"idle" | "scanning" | "clean" | "warned" | "pending_approval" | "blocked">("idle");
+  const [dlpResult, setDlpResult] = useState<any>(null);
+  const [showDlpApprovalModal, setShowDlpApprovalModal] = useState(false);
+  const [dlpApproving, setDlpApproving] = useState(false);
+  // Holds the in-flight upload continuation while we wait for the user to respond to a
+  // "require_approval" DLP finding via the modal above.
+  const pendingUploadRef = useRef<null | (() => Promise<void>)>(null);
   // Phase 3: optional Zero Trust access policy, collapsed by default since most uploads don't need it.
   const [showPolicy, setShowPolicy] = useState(false);
   const [allowedCountries, setAllowedCountries] = useState("");
@@ -184,14 +195,18 @@ export default function UploadFile() {
       return;
     }
 
+    const currentFile = file;
+
     setUploading(true);
     setError("");
     setUploadProgress(0);
     setSigningStatus("idle");
     setScanStatus("scanning");
     setScanResult(null);
+    setDlpStatus("scanning");
+    setDlpResult(null);
 
-    // --- 0. Phase 4: scan the plaintext file for malware/threats BEFORE any encryption. This
+    // --- 0a. Phase 4: scan the plaintext file for malware/threats BEFORE any encryption. This
     // is the one deliberate exception to "the server never sees plaintext" - the buffer is
     // scanned in memory for the duration of this single request and never persisted. A file
     // flagged Critical/High risk is refused here so nothing gets encrypted/uploaded/stored at
@@ -200,7 +215,7 @@ export default function UploadFile() {
     let scanId: string;
     try {
       const scanFormData = new FormData();
-      scanFormData.append("file", file);
+      scanFormData.append("file", currentFile);
       const scanRes = await api.post("/threats/scan", scanFormData, {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
       });
@@ -227,6 +242,81 @@ export default function UploadFile() {
       return;
     }
 
+    // --- 0b. Phase 5: scan the same plaintext buffer for embedded secrets/PII (DLP), also
+    // before any encryption. Only text-based files are actually inspected; binary files are
+    // skipped gracefully and always resolve to "allow". Four possible outcomes:
+    //   allow/warn            -> proceed straight to encryption + upload
+    //   require_approval      -> pause and ask the uploader to explicitly confirm via a modal
+    //   block                 -> refuse the upload outright, nothing is encrypted/stored
+    let dlpScanId: string;
+    try {
+      const dlpFormData = new FormData();
+      dlpFormData.append("file", currentFile);
+      const dlpRes = await api.post("/dlp/scan", dlpFormData, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
+      });
+      setDlpResult(dlpRes.data);
+      dlpScanId = dlpRes.data.dlpScanId;
+
+      if (dlpRes.data.decision === "block") {
+        setDlpStatus("blocked");
+        setError(
+          `Upload blocked: sensitive data (${(dlpRes.data.matchedPatterns || []).join(", ") || "policy violation"}) was detected by the DLP scanner.`
+        );
+        toast.error("File blocked by DLP scan");
+        setUploading(false);
+        return;
+      }
+
+      if (dlpRes.data.decision === "require_approval") {
+        setDlpStatus("pending_approval");
+        pendingUploadRef.current = async () => {
+          setDlpApproving(true);
+          try {
+            await api.post(
+              `/dlp/scans/${dlpScanId}/acknowledge`,
+              {},
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            setShowDlpApprovalModal(false);
+            await finishUpload(currentFile, token, scanId, dlpScanId);
+          } catch (ackErr: any) {
+            toast.error(ackErr?.response?.data?.error || "Failed to confirm - please try again");
+            setUploading(false);
+          } finally {
+            setDlpApproving(false);
+          }
+        };
+        setShowDlpApprovalModal(true);
+        return;
+      }
+
+      setDlpStatus(dlpRes.data.decision === "warn" ? "warned" : "clean");
+      if (dlpRes.data.decision === "warn") toast("Sensitive data detected - review before sharing", { icon: "⚠️" });
+    } catch (dlpErr: any) {
+      setDlpStatus("idle");
+      const msg = dlpErr?.response?.data?.error || "DLP scan failed. Please try again.";
+      setError(msg);
+      toast.error("DLP scan failed");
+      setUploading(false);
+      return;
+    }
+
+    await finishUpload(currentFile, token, scanId, dlpScanId);
+  };
+
+  const cancelDlpApproval = () => {
+    pendingUploadRef.current = null;
+    setShowDlpApprovalModal(false);
+    setDlpStatus("blocked");
+    setError("Upload cancelled - sensitive data findings were not acknowledged.");
+    setUploading(false);
+  };
+
+  /** Steps 1-2 of the upload: client-side encryption + the actual POST /files/upload. Split out
+   *  from uploadFile() so it can be invoked either immediately (DLP decision allow/warn) or
+   *  later, once the user has explicitly confirmed a "require_approval" DLP finding via the modal. */
+  const finishUpload = async (currentFile: File, token: string, scanId: string, dlpScanId: string) => {
     // Simulate progress for better UX (actual progress can be tracked with axios)
     const progressInterval = setInterval(() => {
       setUploadProgress((prev) => {
@@ -249,7 +339,7 @@ export default function UploadFile() {
 
       try {
         const aesKey = await generateAESKey();
-        const encrypted = await encryptFile(file, aesKey);
+        const encrypted = await encryptFile(currentFile, aesKey);
         ciphertext = encrypted.ciphertext;
         iv = encrypted.iv;
 
@@ -294,13 +384,14 @@ export default function UploadFile() {
 
       // --- 2. Upload only ciphertext + wrapped keys + signature + metadata; raw key never included ---
       const formData = new FormData();
-      formData.append("file", new Blob([ciphertext]), file.name);
+      formData.append("file", new Blob([ciphertext]), currentFile.name);
       formData.append("encryptionVersion", "2");
       formData.append("algorithm", "AES-256-GCM");
       formData.append("iv", bufToBase64(iv));
-      formData.append("mimeType", file.type);
+      formData.append("mimeType", currentFile.type);
       formData.append("wrappedOwnerKey", wrappedOwnerKey);
       formData.append("scanId", scanId);
+      formData.append("dlpScanId", dlpScanId);
       if (passwordWrap) {
         formData.append("wrappedPasswordKey", passwordWrap.wrapped);
         formData.append("keySalt", passwordWrap.salt);
@@ -460,6 +551,18 @@ export default function UploadFile() {
                     <span className={scanStatus === "clean" ? "text-green-300" : "text-yellow-300"}>
                       Threat scan: {scanResult.riskLevel} risk
                       {scanResult.clamav?.status === "unavailable" && " (ClamAV unavailable in this environment)"}
+                    </span>
+                  </div>
+                )}
+                {dlpResult && (
+                  <div className="mt-3 flex items-center gap-2 text-xs">
+                    <Eye size={14} className={dlpStatus === "clean" ? "text-green-300" : "text-yellow-300"} />
+                    <span className={dlpStatus === "clean" ? "text-green-300" : "text-yellow-300"}>
+                      {dlpResult.supported === false
+                        ? "DLP scan: skipped (binary/unsupported file type)"
+                        : `DLP scan: ${dlpResult.severity} severity${
+                            dlpResult.matchedPatterns?.length ? ` (${dlpResult.matchedPatterns.join(", ")})` : ""
+                          }`}
                     </span>
                   </div>
                 )}
@@ -716,6 +819,10 @@ export default function UploadFile() {
                   <p className="text-slate-300 font-semibold text-sm">
                     {scanStatus === "scanning"
                       ? "Scanning for threats..."
+                      : dlpStatus === "scanning"
+                      ? "Scanning for sensitive data (DLP)..."
+                      : dlpStatus === "pending_approval"
+                      ? "Waiting for your approval..."
                       : signingStatus === "signing"
                       ? "Signing file (ECDSA P-256)..."
                       : "Uploading..."}
@@ -801,6 +908,47 @@ export default function UploadFile() {
           uploadFile();
         }}
       />
+
+      {/* Phase 5: DLP "require_approval" confirmation - shown when the scanner found sensitive
+          data that isn't outright blocked, but needs the uploader's explicit sign-off before
+          the file is encrypted and uploaded. Only category/pattern names are shown here, never
+          the actual matched values. */}
+      {showDlpApprovalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 text-orange-300 ring-1 ring-orange-500/30">
+                <Eye size={20} />
+              </div>
+              <h2 className="text-lg font-bold text-white">Sensitive data detected</h2>
+            </div>
+            <p className="text-slate-300 text-sm mb-3">
+              This file appears to contain: <span className="font-semibold text-orange-300">{(dlpResult?.matchedPatterns || []).join(", ") || "sensitive information"}</span>.
+              Do you want to continue uploading it anyway?
+            </p>
+            <p className="text-slate-500 text-xs mb-5">
+              Your choice is recorded in the DLP Center audit log. The file will still be encrypted end-to-end before it leaves your browser.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={cancelDlpApproval}
+                disabled={dlpApproving}
+                className="px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => pendingUploadRef.current?.()}
+                disabled={dlpApproving}
+                className="px-4 py-2 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg disabled:opacity-50 flex items-center gap-2"
+              >
+                {dlpApproving && <Loader size={14} className="animate-spin" />}
+                Continue Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

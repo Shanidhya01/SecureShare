@@ -8,6 +8,7 @@ import User from "../models/User.js";
 import Device from "../models/Device.js";
 import SecurityEvent from "../models/SecurityEvent.js";
 import ThreatScan from "../models/ThreatScan.js";
+import DLPScan from "../models/DLPScan.js";
 import { encryptBuffer } from "../utils/legacy/encrypt.js";
 import { decryptBuffer } from "../utils/legacy/decrpyt.js";
 import https from "https";
@@ -17,6 +18,7 @@ import { parseUserAgent } from "../utils/deviceContext.js";
 import { resolveCountry } from "../utils/geoLookup.js";
 import { evaluateDownloadPolicy, hasActivePolicy } from "../services/policyEngine.js";
 import { runThreatScan } from "../services/threatScanService.js";
+import { runDLPScan } from "../services/dlp/dlpEngine.js";
 
 /* Phase 4: links a completed ThreatScan doc to the File it was ultimately used for, marking it
    consumed so the same clean scan result can't be replayed across multiple uploads. Returns the
@@ -24,6 +26,12 @@ import { runThreatScan } from "../services/threatScanService.js";
    denormalized there so downloadFile's quarantine check never needs a second query/populate. */
 const linkThreatScan = async (scanId, fileId) => {
   const scan = await ThreatScan.findByIdAndUpdate(scanId, { fileId, consumedByUpload: true }, { new: true });
+  return scan;
+};
+
+/* Phase 5: same linking/replay-protection pattern as linkThreatScan, for the DLP scan. */
+const linkDlpScan = async (dlpScanId, fileId) => {
+  const scan = await DLPScan.findByIdAndUpdate(dlpScanId, { fileId, consumedByUpload: true }, { new: true });
   return scan;
 };
 
@@ -117,6 +125,35 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     claimedMimeType: req.file.mimetype
   });
 
+  // Phase 5: DLP runs inline right after the malware scan and before encryption, same reasoning
+  // as above - v1 already has plaintext server-side. A "block" decision refuses the upload
+  // outright before anything is encrypted/stored. "require_approval" has no synchronous
+  // confirmation step in this single-request legacy flow, so it's also refused here - use the
+  // v2 (zero-knowledge) upload flow, which supports POST /api/dlp/scans/:id/acknowledge, if you
+  // need to explicitly override a require_approval finding.
+  const dlpResult = runDLPScan(req.file.buffer, {
+    originalFilename: req.file.originalname,
+    claimedMimeType: req.file.mimetype
+  });
+
+  if (dlpResult.decision === "block" || dlpResult.decision === "require_approval") {
+    const dlpScan = await DLPScan.create({ owner: req.user.id, ...dlpResult });
+    SecurityEvent.create({
+      owner: req.user.id,
+      type: "dlp_blocked",
+      message: `Upload blocked: sensitive data detected (${dlpScan.matchedPatterns.join(", ") || dlpScan.severity + " risk"})`,
+      filename: dlpScan.originalFilename,
+      ip: req.headers["x-client-ip"] || req.ip
+    }).catch((e) => console.error("Failed to record security event:", e));
+
+    return res.status(422).json({
+      error: "Upload blocked: sensitive data detected by DLP scan",
+      dlpScanId: dlpScan._id,
+      severity: dlpScan.severity,
+      matchedPatterns: dlpScan.matchedPatterns
+    });
+  }
+
   const { encrypted, aesKey, iv } = encryptBuffer(req.file.buffer);
 
   const encryptedKey = crypto.publicEncrypt(
@@ -146,12 +183,29 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     scanStatus: scanResult.scanStatus,
     riskLevel: scanResult.riskLevel,
     quarantined: scanResult.quarantined,
+    dlpStatus: dlpResult.supported ? dlpResult.scanStatus : "skipped",
+    dlpRisk: dlpResult.severity,
+    dlpDecision: dlpResult.decision,
     policy
   });
 
   const scan = await ThreatScan.create({ owner: req.user.id, fileId: file._id, consumedByUpload: true, ...scanResult });
   file.scanId = scan._id;
+
+  const dlpScan = await DLPScan.create({ owner: req.user.id, fileId: file._id, consumedByUpload: true, ...dlpResult });
+  file.dlpScanId = dlpScan._id;
+
   await file.save();
+
+  if (dlpResult.decision === "warn" && dlpResult.findings.length > 0) {
+    SecurityEvent.create({
+      owner: req.user.id,
+      type: "dlp_warning",
+      message: `Sensitive data detected in "${file.filename}": ${dlpResult.matchedPatterns.join(", ")}`,
+      file: file._id,
+      filename: file.filename
+    }).catch((e) => console.error("Failed to record security event:", e));
+  }
 
   if (scan.quarantined) {
     SecurityEvent.create({
@@ -184,7 +238,8 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     hashAlgorithm,
     signatureAlgorithm,
     signedAt,
-    scanId
+    scanId,
+    dlpScanId
   } = req.body;
 
   if (!iv || !wrappedOwnerKey) {
@@ -217,6 +272,36 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   }
   if (scan.consumedByUpload) {
     return res.status(400).json({ error: "This scan result has already been used for another upload" });
+  }
+
+  // Phase 5: same requirement for a DLP scan, run after the malware scan and before encryption
+  // (POST /api/dlp/scan) - see services/dlp/dlpEngine.js. A "block" decision refuses the upload
+  // outright; a "require_approval" decision refuses unless the owner has explicitly acknowledged
+  // it first (POST /api/dlp/scans/:id/acknowledge).
+  if (!dlpScanId) {
+    return res.status(400).json({ error: "Missing dlpScanId - scan the file with POST /api/dlp/scan before uploading" });
+  }
+  const dlpScan = await DLPScan.findById(dlpScanId);
+  if (!dlpScan || String(dlpScan.owner) !== String(req.user.id)) {
+    return res.status(400).json({ error: "Invalid dlpScanId" });
+  }
+  if (dlpScan.consumedByUpload) {
+    return res.status(400).json({ error: "This DLP scan result has already been used for another upload" });
+  }
+  if (dlpScan.decision === "block") {
+    return res.status(422).json({
+      error: "Upload blocked: sensitive data detected by DLP scan",
+      severity: dlpScan.severity,
+      matchedPatterns: dlpScan.matchedPatterns
+    });
+  }
+  if (dlpScan.decision === "require_approval" && !dlpScan.acknowledged) {
+    return res.status(422).json({
+      error: "Upload requires approval: sensitive data detected by DLP scan. Acknowledge via POST /api/dlp/scans/:id/acknowledge to proceed.",
+      dlpScanId: dlpScan._id,
+      severity: dlpScan.severity,
+      matchedPatterns: dlpScan.matchedPatterns
+    });
   }
 
   const owner = await User.findById(req.user.id).select("publicKey");
@@ -258,16 +343,31 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     scanStatus: scan.scanStatus,
     riskLevel: scan.riskLevel,
     quarantined: scan.quarantined,
+    dlpScanId: dlpScan._id,
+    dlpStatus: dlpScan.supported ? dlpScan.scanStatus : "skipped",
+    dlpRisk: dlpScan.severity,
+    dlpDecision: dlpScan.decision,
     policy
   });
 
   await linkThreatScan(scan._id, file._id);
+  await linkDlpScan(dlpScan._id, file._id);
 
   if (scan.quarantined) {
     SecurityEvent.create({
       owner: req.user.id,
       type: "file_quarantined",
       message: `Upload quarantined: ${scan.riskLevel} risk`,
+      file: file._id,
+      filename: file.filename
+    }).catch((e) => console.error("Failed to record security event:", e));
+  }
+
+  if (dlpScan.decision === "warn" || dlpScan.decision === "require_approval") {
+    SecurityEvent.create({
+      owner: req.user.id,
+      type: dlpScan.decision === "warn" ? "dlp_warning" : "dlp_sensitive_data_detected",
+      message: `Sensitive data detected in "${file.filename}": ${dlpScan.matchedPatterns.join(", ")}`,
       file: file._id,
       filename: file.filename
     }).catch((e) => console.error("Failed to record security event:", e));

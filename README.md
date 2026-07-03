@@ -5,7 +5,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
-[![Security Phases](https://img.shields.io/badge/Security-4%20Phases%20Complete-success)](#-security-architecture-roadmap)
+[![Security Phases](https://img.shields.io/badge/Security-5%20Phases%20Complete-success)](#-security-architecture-roadmap)
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](#-key-features)
 
 A production-ready, full-stack secure file sharing application that prioritizes **privacy, security, and simplicity**. Upload files with true end-to-end encryption, digital signatures, Zero Trust access control, and automated malware scanning — all with an intuitive UI and comprehensive audit logs.
@@ -20,7 +20,7 @@ SecureShare enables users to securely share files without exposing sensitive dat
 
 ## 🗺️ Security Architecture Roadmap
 
-SecureShare's security model was built in four independent, additive phases — each one layers a new guarantee on top of the last without breaking what came before. Every phase is backward compatible: a file created in Phase 1 still works correctly after Phases 2-4 shipped.
+SecureShare's security model was built in five independent, additive phases — each one layers a new guarantee on top of the last without breaking what came before. Every phase is backward compatible: a file created in Phase 1 still works correctly after Phases 2-5 shipped.
 
 | Phase | Guarantee | Core Mechanism | Status |
 |---|---|---|---|
@@ -28,6 +28,7 @@ SecureShare's security model was built in four independent, additive phases — 
 | **2 — [Digital Signatures](#️-phase-2-digital-signatures--integrity-verification)** | Authenticity & integrity — prove who uploaded it and that it's unmodified | ECDSA P-256 signatures over the ciphertext, verified before decryption | ✅ Complete |
 | **3 — [Zero Trust Access Control](#️-phase-3-zero-trust-access-control)** | Access control — never trust a request just because it arrived | Device fingerprinting, revocable sessions, per-file policy engine | ✅ Complete |
 | **4 — [Malware Scanning](#-phase-4-malware-scanning--threat-detection)** | Content safety — catch malicious files before they're stored | Magic bytes, ClamAV, VirusTotal, risk classification, auto-quarantine | ✅ Complete |
+| **5 — [Data Loss Prevention](#-phase-5-data-loss-prevention-dlp)** | Data hygiene — catch secrets/PII before they're shared | Pattern-based detectors, Luhn validation, configurable allow/warn/block/require-approval policy | ✅ Complete |
 
 See [SECURITY.md](SECURITY.md) for the consolidated threat model and [CHANGELOG.md](CHANGELOG.md) for what shipped in each phase.
 
@@ -593,6 +594,91 @@ The upload itself is **not** hard-blocked server-side by a quarantine verdict (t
 
 ---
 
+## 🕵️ Phase 5: Data Loss Prevention (DLP)
+
+Phase 4 asks "is this file dangerous?" Phase 5 asks a different question: "does this file accidentally contain something it shouldn't - a password, an API key, a customer's Aadhaar number?" DLP scans the plaintext of supported text-based files for embedded secrets and PII **before** encryption, and applies a configurable policy (allow/warn/require-approval/block) to decide whether the upload proceeds.
+
+### The zero-knowledge conflict, and how it's resolved
+
+Same fundamental tension as Phase 4: content inspection is meaningless against ciphertext, so DLP needs a moment of plaintext access. It reuses the exact pattern Phase 4 established - `POST /api/dlp/scan` is another narrowly-scoped exception where the browser sends plaintext bytes purely to be scanned, in-memory, for the duration of a single request, never logged or written to disk. Only the *scan verdict* (masked finding previews, severity, decision) is persisted as a `DLPScan` document - never the raw secret values themselves, which would just recreate a secret store inside the DLP database.
+
+The legacy `encryptionVersion: 1` upload path scans inline, immediately after its Phase 4 malware scan and before encryption, for the same reason Phase 4's inline scan works there - it already has plaintext server-side.
+
+### Detectors
+
+`backend/services/dlp/detectors/` holds one small, dependency-free, pure module per secret/PII type - each exports `{ id, label, category, severity, detect(text) }`. Adding a new detector is just adding a file and registering it in `detectors/index.js`; nothing else needs to change.
+
+| Detector | What it catches | Notes |
+|---|---|---|
+| `email` | Email addresses | Low severity, informational |
+| `phone` | Phone numbers (international/local formats) | Broad pattern, higher false-positive rate |
+| `credit_card` | Credit card numbers | **Luhn-validated** - candidate digit sequences that fail the checksum are discarded |
+| `aadhaar` | Indian Aadhaar numbers | Regex + first-digit heuristic, not a full Verhoeff checksum |
+| `pan` | Indian PAN numbers | 5-letter/4-digit/1-letter format |
+| `passport` | Passport numbers | Deliberately broad (1-2 letters + 6-9 digits) - trades precision for recall |
+| `aws_access_key` | AWS Access Key IDs | `AKIA`/`ASIA`/etc. prefix match |
+| `aws_secret_key` | AWS Secret Access Keys | Only fires when a 40-char base64-shaped string appears near an `aws_secret_access_key`-style key name, to avoid flagging arbitrary hashes |
+| `github_token` | GitHub Personal Access Tokens | `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` prefixes |
+| `gitlab_token` | GitLab Personal Access Tokens | `glpat-` prefix |
+| `google_api_key` | Google API Keys | `AIza` prefix |
+| `openai_api_key` | OpenAI API Keys | `sk-`/`sk-proj-`/`sk-svcacct-` prefixes |
+| `jwt_token` | JWT tokens | Three-part base64url `eyJ...` structure |
+| `pem_private_key` | PEM private keys | `-----BEGIN ... PRIVATE KEY-----` blocks |
+| `certificate` | X.509 certificates | Low severity - certs are normally public material |
+| `password_assignment` | Hardcoded `password = "..."` style assignments | Placeholder values (`changeme`, `example`, ...) are ignored |
+| `env_secret` | `.env`-style `KEY=VALUE` secrets | Key name must look secret-shaped (`SECRET`, `TOKEN`, `API_KEY`, ...); placeholders ignored |
+
+Findings never store the raw matched value - only a masked preview (`backend/services/dlp/maskUtils.js`), e.g. `AK******LE`, enough for a human to recognize what was found without the DLP database itself becoming a leak.
+
+### Supported file types
+
+Only **text-based files** are scanned; DLP has nothing meaningful to say about binary content. `backend/services/dlp/textFileSupport.js` decides eligibility from extension, MIME type, and a printable-byte-ratio heuristic (the same style as `backend/utils/magicBytes.js`'s Phase 4 detection) - anything that doesn't look like text (images, video, most archives, executables) is **skipped gracefully**: the scan still completes and always resolves to `allow`, it just performs no content inspection. Text content is capped at 5MB per scan (`MAX_SCAN_BYTES`) to keep regex scan time bounded on very large files.
+
+### Policy engine
+
+`backend/services/dlp/dlpPolicyConfig.js` is a **pure, configurable function** (`resolveDecision`), following the same tunable-constant pattern as Phase 4's `RISK_CONFIG`. Four possible decisions, the most severe finding across the whole scan wins:
+
+| Decision | Meaning |
+|---|---|
+| **Allow** | No action needed, upload proceeds silently |
+| **Warn** | Upload proceeds, uploader sees a non-blocking warning |
+| **Require Approval** | Upload is held until the uploader explicitly confirms via `POST /api/dlp/scans/:id/acknowledge`, then proceeds |
+| **Block** | Upload is refused outright - the file is never encrypted or stored |
+
+Default behavior: credentials/keys (AWS, GitHub, GitLab, Google, OpenAI, PEM private keys, hardcoded passwords, `.env` secrets) and credit card numbers are always **blocked** outright, regardless of the raw detector severity. Aadhaar/PAN/JWT findings **require approval**. Phone numbers and passports (higher false-positive patterns) only **warn**. Plain emails and certificates are **allowed**. Every one of these mappings lives in one exported config object (`SEVERITY_ACTION`, `DETECTOR_ACTION_OVERRIDES`), editable without touching any call site.
+
+### DLP Center
+
+`frontend/app/dlp/page.tsx` (linked from the navbar) gives users:
+- **Scan History** — every DLP scan triggered, with matched pattern types, severity, and decision
+- **Sensitive Data Findings** — scans with a non-`allow` decision, showing which detector categories fired
+- **Blocked Uploads** — scans that resulted in a hard block
+- **Top Detected Secret Types** — a ranked breakdown of the most frequently detected finding types
+- **DLP Statistics** — total scans, policy violations, blocked-upload count, severity breakdown
+
+### Upload pipeline integration
+
+DLP runs **after the Phase 4 malware scan and before encryption**, in both upload paths:
+- **v2 (zero-knowledge)**: `POST /api/dlp/scan` → verdict + `dlpScanId` returned to the browser → client encrypts locally → `POST /api/files/upload` must reference the (unconsumed) `dlpScanId`, same replay-protection pattern as Phase 4's `scanId`. A `require_approval` decision blocks the actual upload call unless the scan has been acknowledged first.
+- **v1 (legacy)**: scans inline, immediately after the malware scan, before `encryptBuffer()`. Since v1 has no client round-trip, `require_approval` findings are also refused here (with a message pointing to the v2 flow, which supports the acknowledge step) - a documented limitation of the single-request legacy path.
+
+### Extended audit logs
+
+DLP outcomes are recorded as `SecurityEvent` entries (`dlp_blocked`, `dlp_warning`, `dlp_sensitive_data_detected`) - the same fire-and-forget, non-blocking pattern used for every other Phase 3/4 security event.
+
+### Backward compatibility
+
+`File.dlpStatus` defaults to `"not_scanned"`, `dlpRisk`/`dlpDecision` default to `null` - every file uploaded before Phase 5 is completely unaffected. New `encryptionVersion: 2` uploads are required to reference a completed DLP scan (`dlpScanId`) going forward, mirroring how Phase 4 made `scanId` mandatory for new uploads without touching anything that already existed.
+
+### Limitations
+
+- Pattern-based detection is inherently heuristic: passport and phone-number patterns in particular trade precision for recall and will produce false positives on similarly-shaped IDs. Detectors are tuned to reduce this (Luhn validation for cards, keyword-proximity for AWS secrets, placeholder-value filtering for passwords/`.env` secrets) but cannot eliminate it entirely.
+- Aadhaar validation uses a first-digit heuristic, not the full Verhoeff checksum UIDAI actually uses - a false positive/negative is possible on edge cases.
+- Only text-based files are inspected; secrets embedded inside binary formats (e.g. a password baked into a compiled binary, or an image's EXIF data) are not detected.
+- Scanned content is capped at 5MB per file; matches beyond that offset in very large text files won't be found.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -794,6 +880,17 @@ docker-compose down
 | `GET` | `/stats` | Aggregate threat statistics (total scans, risk breakdown, malware detections) | Yes |
 | `POST` | `/quarantine/:id/release` | Manually release a file from quarantine (owner override, e.g. for a false positive) | Yes |
 
+### DLP Routes (`/api/dlp`, Phase 5)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `POST` | `/scan` | Scan a plaintext file for secrets/PII before encryption - see [Phase 5](#️-phase-5-data-loss-prevention-dlp); returns a `dlpScanId` to reference from `POST /api/files/upload` | Yes |
+| `POST` | `/scans/:id/acknowledge` | Confirm a `require_approval` finding so the upload can proceed | Yes |
+| `GET` | `/scans` | Your DLP scan history, newest first | Yes |
+| `GET` | `/scans/blocked` | Scans that resulted in a hard block | Yes |
+| `GET` | `/stats` | Aggregate DLP statistics (scan volume, policy violations, blocked uploads, top detected types) | Yes |
+| `GET` | `/policy` | The currently configured DLP policy (severity actions + per-detector overrides) | Yes |
+
 **Upload Request:**
 ```json
 {
@@ -992,6 +1089,13 @@ docker run -p 3000:3000 secureshare-frontend
   riskLevel: String,    // "Low" | "Medium" | "High" | "Critical" | null
   quarantined: Boolean, // true blocks all downloads unconditionally, see downloadFile()
 
+  // Phase 5: DLP scan result, mirrored from the DLPScan doc referenced by dlpScanId. Defaults
+  // keep every pre-Phase-5 file unaffected: dlpStatus "not_scanned", dlpRisk/dlpDecision null.
+  dlpScanId: ObjectId (ref: DLPScan),
+  dlpStatus: String,    // "not_scanned" | "pending" | "completed" | "failed" | "skipped"
+  dlpRisk: String,      // "None" | "Low" | "Medium" | "High" | "Critical" | null
+  dlpDecision: String,  // "allow" | "warn" | "require_approval" | "block" | null
+
   // Phase 3: Zero Trust access policy. All fields optional/empty by default - a file with no
   // policy configured is unaffected (see backend/services/policyEngine.js).
   policy: {
@@ -1066,14 +1170,15 @@ docker run -p 3000:3000 secureshare-frontend
 }
 ```
 
-### SecurityEvent Collection (Phase 3, extended in Phase 4)
+### SecurityEvent Collection (Phase 3, extended in Phase 4 & 5)
 ```javascript
 {
   _id: ObjectId,
   owner: ObjectId (ref: User),
-  type: String,   // "new_device" | "device_removed" | "session_revoked" | "download_denied" | "file_quarantined"
+  type: String,   // "new_device" | "device_removed" | "session_revoked" | "download_denied" |
+                  // "file_quarantined" | "dlp_blocked" | "dlp_warning" | "dlp_sensitive_data_detected"
   message: String,
-  file: ObjectId (ref: File),   // present for download_denied / file_quarantined events
+  file: ObjectId (ref: File),   // present for download_denied / file_quarantined / dlp_* events
   filename: String,
   deviceId: String,
   ip: String,
@@ -1121,6 +1226,46 @@ docker run -p 3000:3000 secureshare-frontend
   riskLevel: String,       // "Low" | "Medium" | "High" | "Critical"
   quarantined: Boolean,
   scanStatus: String,      // "pending" | "completed" | "failed"
+  consumedByUpload: Boolean, // prevents a single scan result from backing more than one upload
+
+  createdAt: Timestamp,
+  updatedAt: Timestamp
+}
+```
+
+### DLPScan Collection (Phase 5)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+  fileId: ObjectId (ref: File),   // null until the scan is consumed by an actual upload
+  originalFilename: String,
+  fileSizeBytes: Number,
+
+  supported: Boolean,       // false for binary/unsupported files - those are skipped gracefully
+  skipReason: String,       // e.g. "binary_or_unsupported_type", present only when supported is false
+  truncated: Boolean,       // true if the file exceeded the 5MB scan cap
+
+  findings: [
+    {
+      detectorId: String,  // e.g. "aws_access_key", matches services/dlp/detectors/*.js `id`
+      label: String,
+      category: String,
+      severity: String,    // "Low" | "Medium" | "High" | "Critical"
+      count: Number,
+      samples: [String]    // masked previews only, e.g. "AK******LE" - never raw values
+    }
+  ],
+  matchedPatterns: [String], // detector ids that matched, for quick filtering
+
+  severity: String,   // "None" | "Low" | "Medium" | "High" | "Critical"
+
+  policy: Mixed,       // snapshot of the policy config applied at scan time, for audit purposes
+  decision: String,    // "allow" | "warn" | "require_approval" | "block"
+  scanStatus: String,  // "pending" | "completed" | "failed"
+
+  acknowledged: Boolean,   // owner override for a "require_approval" decision
+  acknowledgedAt: Date,
   consumedByUpload: Boolean, // prevents a single scan result from backing more than one upload
 
   createdAt: Timestamp,
