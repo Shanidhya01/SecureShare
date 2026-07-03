@@ -2,7 +2,7 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import Device from "../models/Device.js";
 import Session from "../models/Session.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { parseUserAgent } from "../utils/deviceContext.js";
@@ -23,15 +23,24 @@ export const register = async (req, res) => {
     }
 
     const hashed = await bcrypt.hash(password, 10);
-    await User.create({
+    const normalizedEmail = email.toLowerCase().trim();
+    const newUser = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password: hashed,
       // Optional: base64 SPKI RSA-OAEP public key generated client-side for E2E encryption.
       publicKey: typeof publicKey === "string" && publicKey.length > 0 ? publicKey : undefined,
       // Optional: base64 SPKI ECDSA P-256 public signing key generated client-side (Phase 2).
       signingPublicKey: typeof signingPublicKey === "string" && signingPublicKey.length > 0 ? signingPublicKey : undefined
     });
+
+    logSecurityEvent({
+      owner: newUser._id,
+      type: "register",
+      message: `Account registered: ${normalizedEmail}`,
+      ip: getClientIp(req),
+      country: resolveCountry(req)
+    }).catch((e) => console.error("Failed to record security event:", e));
 
     res.status(201).json({ message: "Registered" });
   } catch (err) {
@@ -83,7 +92,7 @@ export const login = async (req, res) => {
           lastIp: ip,
           trusted: true
         });
-        await SecurityEvent.create({
+        await logSecurityEvent({
           owner: user._id,
           type: "new_device",
           message: `New device signed in: ${browser} on ${operatingSystem}`,
@@ -104,6 +113,25 @@ export const login = async (req, res) => {
       ip,
       country
     });
+
+    // Phase 6 (SIEM): surface every successful login and the session it created in the unified
+    // event feed - previously only first-time devices were logged at all.
+    logSecurityEvent({
+      owner: user._id,
+      type: "login",
+      message: `Signed in from ${browser} on ${operatingSystem}`,
+      deviceId: cleanDeviceId,
+      ip,
+      country
+    }).catch((e) => console.error("Failed to record security event:", e));
+    logSecurityEvent({
+      owner: user._id,
+      type: "session_created",
+      message: `New session started on ${browser} on ${operatingSystem}`,
+      deviceId: cleanDeviceId,
+      ip,
+      country
+    }).catch((e) => console.error("Failed to record security event:", e));
 
     const token = jwt.sign({ id: user._id, sid: sessionId }, process.env.JWT_SECRET);
     res.json({ token, user: { email: user.email, name: user.name } });

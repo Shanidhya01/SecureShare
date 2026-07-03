@@ -1,5 +1,5 @@
 import DLPScan from "../models/DLPScan.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 import { runDLPScan } from "../services/dlp/dlpEngine.js";
 import { DETECTORS } from "../services/dlp/detectors/index.js";
 import { SEVERITY_ACTION, DETECTOR_ACTION_OVERRIDES } from "../services/dlp/dlpPolicyConfig.js";
@@ -31,20 +31,22 @@ export const scanFile = async (req, res) => {
     });
 
     if (scan.decision === "block") {
-      SecurityEvent.create({
+      logSecurityEvent({
         owner: req.user.id,
         type: "dlp_blocked",
         message: `Upload blocked: sensitive data detected (${scan.matchedPatterns.join(", ") || scan.severity + " risk"})`,
         filename: scan.originalFilename,
-        ip: req.headers["x-client-ip"] || req.ip
+        ip: req.headers["x-client-ip"] || req.ip,
+        metadata: { matchedPatterns: scan.matchedPatterns, severity: scan.severity }
       }).catch((e) => console.error("Failed to record security event:", e));
     } else if (scan.findings.length > 0) {
-      SecurityEvent.create({
+      logSecurityEvent({
         owner: req.user.id,
         type: scan.decision === "warn" ? "dlp_warning" : "dlp_sensitive_data_detected",
         message: `Sensitive data detected in "${scan.originalFilename}": ${scan.matchedPatterns.join(", ")}`,
         filename: scan.originalFilename,
-        ip: req.headers["x-client-ip"] || req.ip
+        ip: req.headers["x-client-ip"] || req.ip,
+        metadata: { matchedPatterns: scan.matchedPatterns, severity: scan.severity }
       }).catch((e) => console.error("Failed to record security event:", e));
     }
 

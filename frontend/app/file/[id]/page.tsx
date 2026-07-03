@@ -155,6 +155,14 @@ export default function FileDownloadPage() {
     return context === "password" ? "Wrong password. Please try again." : "Integrity verification failed - the file or key may be corrupted or tampered with.";
   };
 
+  // Phase 6 (SIEM): signature verification happens entirely client-side (zero-knowledge design -
+  // the server never sees plaintext or performs the ECDSA check itself), so the outcome is
+  // reported here for the SIEM's event feed. Fire-and-forget and non-blocking - reporting must
+  // never affect the download flow, and no crypto logic below is touched.
+  const reportSignatureEvent = (result: "verified" | "invalid") => {
+    api.post("/siem/events/signature", { fileId, result }).catch(() => {});
+  };
+
   const verifySignature = async (ciphertext: ArrayBuffer): Promise<void> => {
     setDownloadStage("signature");
     if (!meta?.signature || !meta?.ownerSigningPublicKey) {
@@ -166,9 +174,11 @@ export default function FileDownloadPage() {
     const valid = await verifyEncryptedFileSignature(ciphertext, meta.signature, publicKey);
     if (!valid) {
       setSignatureStatus("failed");
+      reportSignatureEvent("invalid");
       throw new Error("TAMPERED");
     }
     setSignatureStatus("verified");
+    reportSignatureEvent("verified");
   };
 
   const handleDecryptWithFragment = async () => {

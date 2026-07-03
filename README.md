@@ -20,7 +20,7 @@ SecureShare enables users to securely share files without exposing sensitive dat
 
 ## 🗺️ Security Architecture Roadmap
 
-SecureShare's security model was built in five independent, additive phases — each one layers a new guarantee on top of the last without breaking what came before. Every phase is backward compatible: a file created in Phase 1 still works correctly after Phases 2-5 shipped.
+SecureShare's security model was built in six independent, additive phases — each one layers a new guarantee on top of the last without breaking what came before. Every phase is backward compatible: a file created in Phase 1 still works correctly after Phases 2-6 shipped.
 
 | Phase | Guarantee | Core Mechanism | Status |
 |---|---|---|---|
@@ -29,6 +29,7 @@ SecureShare's security model was built in five independent, additive phases — 
 | **3 — [Zero Trust Access Control](#️-phase-3-zero-trust-access-control)** | Access control — never trust a request just because it arrived | Device fingerprinting, revocable sessions, per-file policy engine | ✅ Complete |
 | **4 — [Malware Scanning](#-phase-4-malware-scanning--threat-detection)** | Content safety — catch malicious files before they're stored | Magic bytes, ClamAV, VirusTotal, risk classification, auto-quarantine | ✅ Complete |
 | **5 — [Data Loss Prevention](#-phase-5-data-loss-prevention-dlp)** | Data hygiene — catch secrets/PII before they're shared | Pattern-based detectors, Luhn validation, configurable allow/warn/block/require-approval policy | ✅ Complete |
+| **6 — [Centralized SIEM & SOC](#-phase-6-centralized-siem--security-operations-center)** | Visibility — one correlated view across every prior phase | Unified event taxonomy, severity levels, rule-based correlation engine, SOC dashboard | ✅ Complete |
 
 See [SECURITY.md](SECURITY.md) for the consolidated threat model and [CHANGELOG.md](CHANGELOG.md) for what shipped in each phase.
 
@@ -42,6 +43,8 @@ See [SECURITY.md](SECURITY.md) for the consolidated threat model and [CHANGELOG.
 - **Digital Signatures** (Phase 2): every upload is signed with a per-user ECDSA P-256 key; downloads verify the signature before decrypting, blocking tampered files outright
 - **Zero Trust Access Policies** (Phase 3): optional per-file country/IP/device allowlists, business-hours windows, device caps, and approval requirements, plus device fingerprinting and revocable sessions
 - **Malware Scanning & Quarantine** (Phase 4): every new upload is scanned pre-encryption (magic bytes, ClamAV, VirusTotal, MIME-mismatch/macro/archive heuristics) and automatically quarantined if flagged High/Critical risk
+- **Data Loss Prevention** (Phase 5): plaintext text-based uploads are scanned for embedded secrets/PII before encryption, with a configurable allow/warn/require-approval/block policy
+- **Centralized SIEM & SOC Dashboard** (Phase 6): every event from every phase above is normalized into one taxonomy with severity levels, automatically correlated into incidents, and surfaced in a unified Security Operations Center dashboard
 - **Audit Logging**: Track all file downloads with IP, device, browser, country, policy decision, and scan result
 - **Automatic Expiration**: Files automatically delete after expiry time
 - **JWT Authentication**: Secure token-based user authentication with revocable sessions
@@ -273,6 +276,7 @@ SecureShare/
 │   │   ├── dashboard/            # User dashboard
 │   │   ├── security/             # Phase 3: Security Center (devices, sessions, events)
 │   │   ├── threats/              # Phase 4: Threat Center (scans, quarantine, malware detections)
+│   │   ├── soc/                  # Phase 6: Security Operations Center (unified SIEM dashboard)
 │   │   └── file/[id]/            # File detail & download
 │   ├── components/               # Reusable React components
 │   │   ├── Navbar.tsx
@@ -286,6 +290,7 @@ SecureShare/
 │   │   ├── ipTracking.ts
 │   │   ├── security/
 │   │   │   └── fingerprint.ts     # Phase 3: privacy-minimal device fingerprint hash (getDeviceId)
+│   │   ├── severity.ts            # Phase 6: severity/category color + label maps for the SOC dashboard
 │   │   └── crypto/                # Zero-knowledge crypto module (Web Crypto API only, no crypto-js)
 │   │       ├── cryptoHelpers.ts   # Public entry point - re-exports everything below
 │   │       ├── base64.ts          # base64 / base64url encode-decode helpers
@@ -310,13 +315,15 @@ SecureShare/
 │   │   ├── session.controller.js  # Phase 3: active session list/revocation
 │   │   ├── security.controller.js # Phase 3: unified security-event feed
 │   │   ├── threat.controller.js   # Phase 4: pre-encryption scan, scan history, quarantine
+│   │   ├── siem.controller.js     # Phase 6: dashboard, events, incidents, search, export, stats
 │   │   └── file.controller.js
 │   ├── models/                   # Mongoose schemas
 │   │   ├── User.js
 │   │   ├── Device.js              # Phase 3
 │   │   ├── Session.js             # Phase 3
-│   │   ├── SecurityEvent.js       # Phase 3 (extended in Phase 4 with file_quarantined)
+│   │   ├── SecurityEvent.js       # Phase 3 (extended in Phase 4 + Phase 6 with siemType/severity/category)
 │   │   ├── ThreatScan.js          # Phase 4
+│   │   ├── Incident.js            # Phase 6: correlated event groups
 │   │   └── File.js
 │   ├── routes/                   # API endpoints
 │   │   ├── auth.routes.js
@@ -325,6 +332,7 @@ SecureShare/
 │   │   ├── session.routes.js      # Phase 3
 │   │   ├── security.routes.js     # Phase 3
 │   │   ├── threat.routes.js       # Phase 4
+│   │   ├── siem.routes.js         # Phase 6
 │   │   └── file.routes.js
 │   ├── middleware/               # Custom middleware
 │   │   ├── auth.middleware.js     # Phase 3: also checks session revocation
@@ -334,7 +342,11 @@ SecureShare/
 │   │   ├── riskEngine.js          # Phase 4: classifyRisk() / shouldQuarantine()
 │   │   ├── threatScanService.js   # Phase 4: orchestrates the full scan pipeline
 │   │   ├── clamavScanner.js       # Phase 4: clamd INSTREAM protocol client
-│   │   └── virusTotalLookup.js    # Phase 4: optional VirusTotal hash lookup
+│   │   ├── virusTotalLookup.js    # Phase 4: optional VirusTotal hash lookup
+│   │   └── siem/                  # Phase 6
+│   │       ├── eventCatalog.js    # type -> siemType/severity/category/label mapping
+│   │       ├── siemLogger.js      # logSecurityEvent() - the one place SecurityEvent is written
+│   │       └── correlationEngine.js # pure rule evaluation + Incident grouping
 │   ├── utils/                    # Helper functions
 │   │   ├── cloudinary.js
 │   │   ├── deviceContext.js       # Phase 3: dependency-free User-Agent parsing
@@ -679,6 +691,80 @@ DLP outcomes are recorded as `SecurityEvent` entries (`dlp_blocked`, `dlp_warnin
 
 ---
 
+## 🎯 Phase 6: Centralized SIEM & Security Operations Center
+
+Phases 1-5 each shipped a real security capability, but each one logged (or didn't log) its own events in its own way, with no shared severity scale, no cross-event correlation, and no single place to see "what's happening across my account right now." Phase 6 doesn't add a new detection capability - it **unifies observability** across everything that came before it, without touching any detection/crypto/policy logic itself.
+
+```mermaid
+flowchart LR
+    A[Auth] --> L[logSecurityEvent]
+    B[Zero Trust] --> L
+    C[Threat Detection] --> L
+    D[DLP] --> L
+    E[Upload / Download] --> L
+    F[Device / Session] --> L
+    G[Digital Signatures<br/>client-reported] --> L
+    L --> S[(SecurityEvent<br/>+ severity/category)]
+    S --> CE[Correlation Engine]
+    CE --> I[(Incident)]
+    S --> API[/api/siem/*]
+    I --> API
+    API --> SOC[SOC Dashboard]
+```
+
+### Unified event taxonomy & severity
+
+Every event from every prior phase is normalized into one canonical `siemType` (`LOGIN`, `REGISTER`, `SESSION_CREATED`, `UPLOAD`, `DOWNLOAD_ALLOWED`, `DOWNLOAD_DENIED`, `THREAT_FOUND`, `FILE_QUARANTINED`, `DLP_BLOCK`, `DLP_WARNING`, `DLP_SENSITIVE_DATA`, `SIGNATURE_VERIFIED`, `SIGNATURE_INVALID`, `DEVICE_NEW`, `DEVICE_REVOKED`, `SESSION_REVOKED`, `POLICY_VIOLATION`), one of ten `category` buckets (`AUTH`, `ENCRYPTION`, `SIGNATURE`, `ZERO_TRUST`, `THREAT`, `DLP`, `UPLOAD`, `DOWNLOAD`, `DEVICE`, `SESSION`), and a five-level `severity` (`INFO` < `LOW` < `MEDIUM` < `HIGH` < `CRITICAL`) - see `backend/services/siem/eventCatalog.js` for the full mapping.
+
+A single service, `backend/services/siem/siemLogger.js`, is now the only place that writes a `SecurityEvent` document. Every controller that used to call `SecurityEvent.create(...)` directly now calls `logSecurityEvent(...)` instead, passing the exact same arguments - this is a pure logging indirection, not a change to any detection, crypto, or policy logic.
+
+### Correlation engine → Incidents
+
+A small, declarative, rule-based correlation engine (`backend/services/siem/correlationEngine.js`) runs after every event is logged and groups related events into an `Incident` when a pattern matches:
+
+| Rule | Pattern | Severity |
+|---|---|---|
+| `malware-blocked-download` | A file is quarantined/flagged high-risk, then a download of that same file is later denied | Critical |
+| `repeated-dlp-violations` | 3+ DLP blocks/warnings for the same account within an hour | High |
+| `new-device-then-denied` | A new device appears, then access is denied for that account within the hour | Medium |
+
+The rule-matching logic (`evaluateRules`) is a pure function with no database access, unit tested in `backend/tests/correlationEngine.test.js` - the same pure-function-testing pattern already used for the Phase 3/4/5 policy/risk/DLP engines. Correlation is purely observational: it groups and labels events for the SOC dashboard, and never blocks, delays, or alters the request that triggered it.
+
+### SIEM REST API (`/api/siem`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/dashboard` | Snapshot: event counts, severity/category distribution, open incidents, critical alerts, recent incidents |
+| `GET` | `/events` | Paginated, filterable event list (severity, category, type, device, country, file, incident, date range) |
+| `GET` | `/incidents` | Filterable incident list; `GET /incidents/:id` for a single incident with its full event trail (powers the SOC's Incident Viewer) |
+| `GET` | `/search` | Full-text search across event messages, filenames, IPs, devices, countries, and incident titles/summaries |
+| `GET` | `/export` | Server-side CSV/JSON export honoring the same filters as `/events` |
+| `GET` | `/stats` | Severity/category/type breakdowns plus a 30-day event timeline for the SOC dashboard's charts |
+| `POST` | `/events/signature` | Narrowly-scoped, whitelisted endpoint for client-reported signature verification outcomes (see below) - the only SIEM write endpoint |
+
+All routes are authenticated and scoped to the caller's own account (`owner: req.user.id`), matching every other dashboard in the app - there is no cross-user/admin view.
+
+### Closing the signature-verification gap
+
+Digital signature verification (Phase 2) happens entirely client-side by design (zero-knowledge architecture) - the server never learns whether a downloaded file's signature check passed. `POST /api/siem/events/signature` lets the frontend report that outcome (`verified` or `invalid` only - any other value is rejected) after `frontend/app/file/[id]/page.tsx`'s existing `verifySignature()` runs its ECDSA check. No cryptographic verification logic was added or changed on either side; this only lets an outcome that already exists client-side reach the event feed.
+
+### Security Operations Center dashboard
+
+`frontend/app/soc/page.tsx` (linked from the navbar as "Security Operations") is organized into five tabs:
+- **Overview** — 8 stat cards (Security Events, Critical Events, Incidents, Threats, DLP Alerts, Sessions, Devices, Security Score), a risk gauge, Zero Trust event count, severity distribution, a Critical/High alerts panel, and side-by-side Recent Activity / Recent Incidents panels
+- **Events** — the filterable, paginated, unified Live Event Feed with severity-colored status badges, animated via the same `EventTimeline`/`framer-motion` conventions used elsewhere in the app
+- **Incidents** — every correlated incident; clicking one opens the **Incident Viewer** (a slide-over panel, `frontend/components/soc/IncidentViewer.tsx`) showing its title, severity, status, category, chronological event timeline, referenced files, and per-event evidence (raw metadata/IP/device/country, expandable)
+- **Timeline** — a full chronological security timeline across the account
+- **Analytics** — 9 Recharts panels: Security Activity, Threat Trend, Severity Distribution, Category Distribution, Incident Timeline, Incidents by Status, Risk Trend (a daily severity-weighted score), DLP Findings, and Zero Trust Events
+
+Filtering (date, severity, category, device, country, file, incident) and a debounced full-text search across events and incidents are available from the Events tab, alongside server-generated CSV/JSON export honoring the active filters.
+
+### Backward compatibility
+
+`SecurityEvent`'s original 8-value `type` enum, and every field on it, is unchanged - the Audit Logs page (`/audit`) and `GET /api/security/events` keep working exactly as before. The new `siemType`/`severity`/`category`/`correlationId`/`metadata` fields are additive and optional; historical events simply lack them and appear as "uncategorized" in SIEM views. No detection, cryptography, Zero Trust, malware scanning, or DLP logic was modified - Phase 6 only integrates their existing outputs into the centralized event feed.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -890,6 +976,20 @@ docker-compose down
 | `GET` | `/scans/blocked` | Scans that resulted in a hard block | Yes |
 | `GET` | `/stats` | Aggregate DLP statistics (scan volume, policy violations, blocked uploads, top detected types) | Yes |
 | `GET` | `/policy` | The currently configured DLP policy (severity actions + per-detector overrides) | Yes |
+
+### SIEM Routes (`/api/siem`, Phase 6)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/dashboard` | Snapshot summary for the SOC dashboard overview - see [Phase 6](#-phase-6-centralized-siem--security-operations-center) | Yes |
+| `GET` | `/events` | Paginated, filterable unified event list | Yes |
+| `GET` | `/incidents` | Filterable incident list | Yes |
+| `GET` | `/incidents/:id` | A single incident with its full correlated event trail | Yes |
+| `GET` | `/search` | Full-text search across events and incidents | Yes |
+| `GET` | `/export` | CSV/JSON export of filtered events | Yes |
+| `GET` | `/stats` | Severity/category/type breakdowns + 30-day timeline | Yes |
+| `GET` | `/catalog` | The event type → severity/category/label mapping, for frontend legends | Yes |
+| `POST` | `/events/signature` | Report a client-side signature verification outcome (`verified`/`invalid` only) | Yes |
 
 **Upload Request:**
 ```json
@@ -1272,6 +1372,34 @@ docker run -p 3000:3000 secureshare-frontend
   updatedAt: Timestamp
 }
 ```
+
+### Incident Collection (Phase 6)
+```javascript
+{
+  _id: ObjectId,
+  owner: ObjectId (ref: User),
+
+  ruleId: String,      // which correlation rule created this, e.g. "malware-blocked-download"
+  title: String,
+  summary: String,
+
+  category: String,    // same category enum as SecurityEvent
+  severity: String,    // "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  status: String,       // "open" | "investigating" | "resolved"
+
+  file: ObjectId (ref: File),        // optional - present for file-scoped rules
+  events: [ObjectId] (ref: SecurityEvent),
+  eventCount: Number,
+
+  firstEventAt: Date,
+  lastEventAt: Date,
+
+  createdAt: Timestamp,
+  updatedAt: Timestamp
+}
+```
+
+`SecurityEvent` (Phase 3, extended in Phase 6) additionally carries: `siemType` (canonical uppercase type), `severity`, `category`, `correlationId` (set once the correlation engine groups it into an `Incident`), and `metadata` (small structured extras). All five fields are optional and additive - see [Phase 6](#-phase-6-centralized-siem--security-operations-center) for the backward-compatibility notes.
 
 ---
 

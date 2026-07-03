@@ -6,7 +6,7 @@ import cloudinary from "../utils/cloudinary.js";
 import File from "../models/File.js";
 import User from "../models/User.js";
 import Device from "../models/Device.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 import ThreatScan from "../models/ThreatScan.js";
 import DLPScan from "../models/DLPScan.js";
 import { encryptBuffer } from "../utils/legacy/encrypt.js";
@@ -138,7 +138,7 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
 
   if (dlpResult.decision === "block" || dlpResult.decision === "require_approval") {
     const dlpScan = await DLPScan.create({ owner: req.user.id, ...dlpResult });
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: req.user.id,
       type: "dlp_blocked",
       message: `Upload blocked: sensitive data detected (${dlpScan.matchedPatterns.join(", ") || dlpScan.severity + " risk"})`,
@@ -198,7 +198,7 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   await file.save();
 
   if (dlpResult.decision === "warn" && dlpResult.findings.length > 0) {
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: req.user.id,
       type: "dlp_warning",
       message: `Sensitive data detected in "${file.filename}": ${dlpResult.matchedPatterns.join(", ")}`,
@@ -208,7 +208,7 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   }
 
   if (scan.quarantined) {
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: req.user.id,
       type: "file_quarantined",
       message: `Upload quarantined: ${scan.riskLevel} risk`,
@@ -216,6 +216,14 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
       filename: file.filename
     }).catch((e) => console.error("Failed to record security event:", e));
   }
+
+  logSecurityEvent({
+    owner: req.user.id,
+    type: "upload",
+    message: `Uploaded "${file.filename}"`,
+    file: file._id,
+    filename: file.filename
+  }).catch((e) => console.error("Failed to record security event:", e));
 
   res.json({ fileId: file._id });
 };
@@ -354,7 +362,7 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   await linkDlpScan(dlpScan._id, file._id);
 
   if (scan.quarantined) {
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: req.user.id,
       type: "file_quarantined",
       message: `Upload quarantined: ${scan.riskLevel} risk`,
@@ -364,7 +372,7 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
   }
 
   if (dlpScan.decision === "warn" || dlpScan.decision === "require_approval") {
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: req.user.id,
       type: dlpScan.decision === "warn" ? "dlp_warning" : "dlp_sensitive_data_detected",
       message: `Sensitive data detected in "${file.filename}": ${dlpScan.matchedPatterns.join(", ")}`,
@@ -372,6 +380,14 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
       filename: file.filename
     }).catch((e) => console.error("Failed to record security event:", e));
   }
+
+  logSecurityEvent({
+    owner: req.user.id,
+    type: "upload",
+    message: `Uploaded "${file.filename}"`,
+    file: file._id,
+    filename: file.filename
+  }).catch((e) => console.error("Failed to record security event:", e));
 
   res.json({ fileId: file._id });
 };
@@ -505,7 +521,7 @@ export const downloadFile = async (req, res) => {
     });
     await file.save();
 
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: file.owner,
       type: "download_denied",
       message: `Blocked download of quarantined file (${file.riskLevel} risk)`,
@@ -513,7 +529,10 @@ export const downloadFile = async (req, res) => {
       filename: file.filename,
       deviceId: context.deviceId,
       ip: context.ip,
-      country: context.country
+      country: context.country,
+      category: "THREAT",
+      severity: "HIGH",
+      metadata: { riskLevel: file.riskLevel }
     }).catch((e) => console.error("Failed to record security event:", e));
 
     return res.status(403).json({ error: "quarantined", riskLevel: file.riskLevel });
@@ -539,7 +558,7 @@ export const downloadFile = async (req, res) => {
     });
     await file.save();
 
-    SecurityEvent.create({
+    logSecurityEvent({
       owner: file.owner,
       type: "download_denied",
       message: policyDecision.reason,
@@ -547,7 +566,9 @@ export const downloadFile = async (req, res) => {
       filename: file.filename,
       deviceId: context.deviceId,
       ip: context.ip,
-      country: context.country
+      country: context.country,
+      siemType: "POLICY_VIOLATION",
+      category: "ZERO_TRUST"
     }).catch((e) => console.error("Failed to record security event:", e));
 
     return res.status(403).json({ error: "policy_denied", reason: policyDecision.reason });
@@ -599,6 +620,17 @@ const downloadFileV1 = async (req, res, file, context) => {
     riskLevel: file.riskLevel
   });
   await file.save();
+
+  logSecurityEvent({
+    owner: file.owner,
+    type: "download_allowed",
+    message: `Downloaded "${file.filename}"`,
+    file: file._id,
+    filename: file.filename,
+    deviceId: context.deviceId,
+    ip: context.ip,
+    country: context.country
+  }).catch((e) => console.error("Failed to record security event:", e));
 
   try {
     // Resolve signed URL to fetch encrypted bytes from Cloudinary
@@ -683,6 +715,17 @@ const downloadFileV2 = async (req, res, file, context) => {
     riskLevel: file.riskLevel
   });
   await file.save();
+
+  logSecurityEvent({
+    owner: file.owner,
+    type: "download_allowed",
+    message: `Downloaded "${file.filename}"`,
+    file: file._id,
+    filename: file.filename,
+    deviceId: context.deviceId,
+    ip: context.ip,
+    country: context.country
+  }).catch((e) => console.error("Failed to record security event:", e));
 
   try {
     const signedUrl = cloudinary.url(file.cloudinaryId, {

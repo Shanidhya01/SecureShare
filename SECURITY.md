@@ -1,6 +1,6 @@
 # SecureShare — Security Overview
 
-This document consolidates SecureShare's security model across all five implemented phases. For implementation detail and rationale behind each design decision, see the corresponding section of [README.md](README.md#-security-architecture-roadmap). For how to verify these guarantees hold, see [SECURITY_TESTING.md](SECURITY_TESTING.md).
+This document consolidates SecureShare's security model across all six implemented phases. For implementation detail and rationale behind each design decision, see the corresponding section of [README.md](README.md#-security-architecture-roadmap). For how to verify these guarantees hold, see [SECURITY_TESTING.md](SECURITY_TESTING.md).
 
 ---
 
@@ -29,6 +29,12 @@ Every scan produces a single `riskLevel` (`Low` / `Medium` / `High` / `Critical`
 ### Data Loss Prevention (Phase 5)
 
 Every new upload of a supported text-based file is scanned for embedded secrets and PII — emails, phone numbers, Luhn-validated credit card numbers, Aadhaar/PAN/passport numbers, cloud/source-control/AI-service API keys and tokens, JWTs, PEM private keys, certificates, hardcoded passwords, and `.env`-style secrets — before it's encrypted. A configurable policy (`backend/services/dlp/dlpPolicyConfig.js`) resolves findings into one of four decisions: **Allow**, **Warn**, **Require Approval**, or **Block**. Blocked uploads are refused outright; nothing is encrypted or stored. Detected values are never persisted in full — only masked previews are kept, so the DLP scan history itself never becomes a secondary leak of the secrets it found. Binary/unsupported files are skipped gracefully rather than scanned.
+
+### Security Information & Event Management (Phase 6)
+
+Every event emitted by Phases 1-5 above — logins, uploads, downloads, quarantines, DLP verdicts, device/session changes, policy denials, and client-reported signature verification outcomes — is normalized into one taxonomy (`siemType`), assigned a severity (`INFO`/`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`) and category, and written through a single logging service (`backend/services/siem/siemLogger.js`). A rule-based correlation engine (`backend/services/siem/correlationEngine.js`) groups related events into `Incident` records (e.g. a quarantined file later denied for download), surfaced in a unified Security Operations Center dashboard (`/soc`) with severity-ranked alerts, incident tracking, filtering, full-text search, and export.
+
+**What the correlation engine does not do**: it is detection-only and purely observational. It never blocks, delays, alters, or auto-remediates a request — an `Incident` is a grouped, labeled view over events that already happened, not an enforcement mechanism. No cryptography, Zero Trust policy evaluation, malware scanning, or DLP detection logic was modified to build this phase; the SIEM only consumes their existing outputs.
 
 ---
 
@@ -69,6 +75,7 @@ Every new upload of a supported text-based file is scanned for embedded secrets 
 - Access attempts from unauthorized devices/networks/times against a policy-protected file (Phase 3).
 - Distribution of known-malware or disguised-executable files (Phase 4), to the extent ClamAV/VirusTotal/heuristic signals can detect them.
 - Accidental upload of files containing embedded secrets or PII in supported text formats (Phase 5), to the extent the configured detectors can recognize them.
+- Lack of visibility into related, multi-step suspicious activity (e.g. a quarantined file later targeted for download) — Phase 6's correlation engine surfaces this as a single incident instead of disconnected log rows.
 
 ### Out of scope (known, accepted limitations)
 - A compromised client device/browser at the moment of encryption, decryption, or signing — the endpoint holding key material in memory during that operation is inherently trusted for that operation.
@@ -92,6 +99,9 @@ Every new upload of a supported text-based file is scanned for embedded secrets 
 - **Legacy (`encryptionVersion: 1`) files remain server-side-decryptable by design**, using a single global RSA-2048 keypair — this predates the zero-knowledge model and exists purely for backward compatibility with files uploaded before Phase 1. New uploads never use this path.
 - **DLP detection is heuristic, not exhaustive.** Passport and phone-number patterns in particular are broad and will false-positive on similarly-shaped IDs; Aadhaar validation uses a first-digit heuristic rather than the full Verhoeff checksum. Only text-based files are inspected — secrets embedded in binary formats (compiled binaries, image metadata, etc.) are not detected, and scanned content is capped at 5MB per file.
 - **DLP's `require_approval` decision has no synchronous confirmation step in the legacy (`encryptionVersion: 1`) upload flow** — since that path is a single request with no round-trip, such findings are refused rather than held for approval; use the v2 (zero-knowledge) flow, which supports `POST /api/dlp/scans/:id/acknowledge`, if you need to override one.
+- **The SIEM correlation engine is rule-based, not ML/anomaly-based.** It only recognizes the specific patterns encoded in `backend/services/siem/correlationEngine.js` (currently three rules); attack patterns outside those rules won't be automatically grouped into an incident, though the underlying events are still logged and visible individually.
+- **Signature-verification events are self-reported by the client.** `POST /api/siem/events/signature` records whatever outcome the browser's own ECDSA check produced — a fully compromised client could report a false outcome. This doesn't weaken the actual signature check (which still runs and still blocks a genuinely invalid download client-side); it only means the SIEM's record of that outcome carries the same trust level as any other client-observed telemetry.
+- **Events logged before Phase 6 lack `severity`/`category`/`siemType`.** They still appear in the SIEM's event list and the original Audit Logs page, just without those fields populated (shown as "uncategorized" in SOC views).
 
 ---
 

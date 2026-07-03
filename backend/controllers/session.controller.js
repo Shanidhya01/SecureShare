@@ -1,5 +1,5 @@
 import Session from "../models/Session.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 
 /* List the caller's active (non-revoked) sessions (Security Center). */
 export const getMySessions = async (req, res) => {
@@ -30,7 +30,7 @@ export const revokeSession = async (req, res) => {
   session.revoked = true;
   await session.save();
 
-  await SecurityEvent.create({
+  await logSecurityEvent({
     owner: req.user.id,
     type: "session_revoked",
     message: `Revoked session on ${session.browser || "unknown browser"} (${session.operatingSystem || "unknown OS"})`,

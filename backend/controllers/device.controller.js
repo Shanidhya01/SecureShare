@@ -1,6 +1,6 @@
 import Device from "../models/Device.js";
 import Session from "../models/Session.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 
 /* List the caller's trusted devices (Security Center). */
 export const getMyDevices = async (req, res) => {
@@ -37,7 +37,7 @@ export const removeDevice = async (req, res) => {
 
   await Session.updateMany({ owner: req.user.id, deviceId, revoked: false }, { revoked: true });
 
-  await SecurityEvent.create({
+  await logSecurityEvent({
     owner: req.user.id,
     type: "device_removed",
     message: `Removed device: ${device.label || device.deviceId}`,

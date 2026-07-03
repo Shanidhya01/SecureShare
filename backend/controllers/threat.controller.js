@@ -1,6 +1,6 @@
 import ThreatScan from "../models/ThreatScan.js";
 import File from "../models/File.js";
-import SecurityEvent from "../models/SecurityEvent.js";
+import { logSecurityEvent } from "../services/siem/siemLogger.js";
 import { runThreatScan } from "../services/threatScanService.js";
 
 /**
@@ -31,12 +31,24 @@ export const scanFile = async (req, res) => {
     });
 
     if (scan.quarantined) {
-      SecurityEvent.create({
+      logSecurityEvent({
         owner: req.user.id,
         type: "file_quarantined",
         message: `Upload blocked: ${scan.riskLevel} risk (${scan.clamav.threatNames.concat(scan.virusTotal.threatNames).join(", ") || scan.riskLevel + " risk signals"})`,
         filename: scan.originalFilename,
-        ip: req.headers["x-client-ip"] || req.ip
+        ip: req.headers["x-client-ip"] || req.ip,
+        metadata: { riskLevel: scan.riskLevel }
+      }).catch((e) => console.error("Failed to record security event:", e));
+    } else if (["High", "Critical"].includes(scan.riskLevel)) {
+      // Phase 6 (SIEM): risk was elevated but didn't cross the quarantine threshold - still
+      // worth surfacing as a THREAT_FOUND signal distinct from an actual quarantine action.
+      logSecurityEvent({
+        owner: req.user.id,
+        type: "threat_found",
+        message: `Elevated risk detected: ${scan.riskLevel} risk in "${scan.originalFilename}"`,
+        filename: scan.originalFilename,
+        ip: req.headers["x-client-ip"] || req.ip,
+        metadata: { riskLevel: scan.riskLevel }
       }).catch((e) => console.error("Failed to record security event:", e));
     }
 
@@ -111,7 +123,7 @@ export const releaseFromQuarantine = async (req, res) => {
   file.quarantined = false;
   await file.save();
 
-  SecurityEvent.create({
+  logSecurityEvent({
     owner: req.user.id,
     type: "file_quarantined",
     message: `Quarantine manually released for "${file.filename}"`,

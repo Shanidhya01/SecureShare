@@ -6,6 +6,37 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 6 — Centralized SIEM Platform
+**2026-07-03**
+
+Unified event visibility across every prior phase - one taxonomy, one severity scale, automatic correlation into incidents, and a Security Operations Center dashboard - without modifying any existing detection, cryptography, Zero Trust, malware scanning, or DLP logic.
+
+### Added
+- `backend/services/siem/eventCatalog.js` - single-source-of-truth mapping from every `SecurityEvent.type` (legacy and new) to a canonical `siemType`, default `severity` (`INFO`/`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`), and `category`
+- `backend/services/siem/siemLogger.js` (`logSecurityEvent`) - the one function that now writes every `SecurityEvent` document; every controller that previously called `SecurityEvent.create(...)` directly now calls this instead, with identical arguments
+- `backend/services/siem/correlationEngine.js` - a small, pure, unit-tested rule engine (`evaluateRules`) plus a DB-aware wrapper (`correlateEvent`) that groups related events into `Incident` documents: malware quarantined → later download denied; 3+ DLP violations within an hour; a new device followed by a denied access attempt
+- `Incident` model (`backend/models/Incident.js`) - correlated event groups with severity, category, status, and the full list of grouped `SecurityEvent` ids
+- New event emission points that previously went unlogged: `LOGIN`, `REGISTER`, `SESSION_CREATED`, `UPLOAD`, `DOWNLOAD_ALLOWED`, `THREAT_FOUND` (elevated risk that didn't trigger quarantine)
+- `POST /api/siem/events/signature` - a narrowly-scoped, whitelisted endpoint (`verified`/`invalid` only) letting the frontend report client-side ECDSA signature verification outcomes, closing the previous gap where the server never learned whether a download's signature check passed
+- SIEM REST API (`/api/siem/dashboard`, `/events`, `/incidents`, `/incidents/:id`, `/search`, `/export`, `/stats`, `/catalog`) - all authenticated and scoped to the caller's own account, matching every other dashboard in the app
+- Security Operations Center dashboard (`frontend/app/soc/page.tsx`) - a tabbed layout (Overview, Events, Incidents, Timeline, Analytics) with 8 stat cards, a Recent Activity/Recent Incidents panel, an animated live event feed, 9 Recharts panels (Security Activity, Threat Trend, Severity Distribution, Category Distribution, Incident Timeline, Incidents by Status, Risk Trend, DLP Findings, Zero Trust Events), a critical alerts panel, filtering (date/severity/category/device/country/file/incident), full-text search, and CSV/JSON export
+- Incident Viewer (`frontend/components/soc/IncidentViewer.tsx`) - a slide-over detail panel for a single incident (title, severity, status, category, chronological timeline, referenced files, and expandable per-event evidence), backed by `GET /api/siem/incidents/:id`
+- `backend/tests/correlationEngine.test.js` - unit tests for the correlation engine's pure rule evaluation, using the same `node --test` pattern as the existing DLP tests
+
+### Changed
+- `SecurityEvent` model extended with optional `siemType`, `severity`, `category`, `correlationId`, and `metadata` fields, plus two new indexes (`{owner, severity, createdAt}`, `{owner, correlationId}`)
+- `SecurityEvent.type` enum extended with new lowercase values (`login`, `register`, `session_created`, `upload`, `download_allowed`, `threat_found`, `signature_verified`, `signature_invalid`, `policy_violation`) alongside the original 8 - purely additive
+- `frontend/app/file/[id]/page.tsx`'s existing `verifySignature()` now reports its outcome to `POST /api/siem/events/signature` after verifying - no change to the ECDSA verification logic itself
+- Added "Security Operations" to the main navigation (`frontend/components/shell/navItems.ts`)
+
+### Compatibility
+- Every field on the original `SecurityEvent` schema, and its original 8-value `type` enum, is unchanged - `GET /api/security/events` and the Audit Logs page (`/audit`) work exactly as before
+- All new `SecurityEvent` fields are optional; events logged before this phase simply lack them and appear as "uncategorized" in SIEM views
+- No detection, cryptography, Zero Trust, malware scanning, or DLP logic was modified - only the logging call at each existing site changed (same arguments, different function), and a few new logging calls were added at points that previously went unlogged
+- The SIEM is scoped per-user (`owner: req.user.id`), identical to every other dashboard in the app - no new admin/RBAC concept was introduced
+
+---
+
 ## Phase 4 — Malware Scanning & Threat Detection
 **2026-07-02**
 
