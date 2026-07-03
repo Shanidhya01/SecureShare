@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { ScrollText, AlertCircle, Search, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { ScrollText, AlertCircle, Search, Download } from "lucide-react";
 import { apiErrorStatus } from "@/lib/errors";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
+import Pagination from "@/components/design/Pagination";
 import StatusBadge, { type StatusTone } from "@/components/design/StatusBadge";
 import { TableSkeleton } from "@/components/design/Skeletons";
 
@@ -45,6 +46,8 @@ export default function AuditLogsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
 
   const fetchAll = useCallback(
@@ -77,8 +80,15 @@ export default function AuditLogsPage() {
   }, [fetchAll, router]);
 
   const filtered = useMemo(() => {
+    const from = fromDate ? new Date(fromDate).getTime() : null;
+    // end-of-day for the "to" date so it's inclusive
+    const to = toDate ? new Date(toDate).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
+
     return events.filter((e) => {
       if (typeFilter !== "all" && e.type !== typeFilter) return false;
+      const eventTime = new Date(e.createdAt).getTime();
+      if (from !== null && eventTime < from) return false;
+      if (to !== null && eventTime > to) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
       return (
@@ -88,7 +98,7 @@ export default function AuditLogsPage() {
         (e.country || "").toLowerCase().includes(q)
       );
     });
-  }, [events, search, typeFilter]);
+  }, [events, search, typeFilter, fromDate, toDate]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -122,6 +132,16 @@ export default function AuditLogsPage() {
     { key: "time", header: "Time", className: "whitespace-nowrap text-xs text-muted-foreground", render: (e) => new Date(e.createdAt).toLocaleString() },
   ];
 
+  const resetFilters = () => {
+    setSearch("");
+    setTypeFilter("all");
+    setFromDate("");
+    setToDate("");
+    setPage(1);
+  };
+
+  const filtersActive = search || typeFilter !== "all" || fromDate || toDate;
+
   return (
     <div>
       <PageHeader
@@ -148,7 +168,7 @@ export default function AuditLogsPage() {
         </div>
       )}
 
-      <div className="mb-6 flex flex-col sm:flex-row gap-3">
+      <div className="mb-6 flex flex-col lg:flex-row gap-3">
         <div className="relative flex-1">
           <Search size={16} className="absolute left-3 top-3 text-muted-foreground" />
           <input
@@ -177,6 +197,40 @@ export default function AuditLogsPage() {
             </option>
           ))}
         </select>
+        <div className="flex items-center gap-2">
+          <label htmlFor="fromDate" className="sr-only">From date</label>
+          <input
+            id="fromDate"
+            type="date"
+            value={fromDate}
+            onChange={(e) => {
+              setFromDate(e.target.value);
+              setPage(1);
+            }}
+            className="px-3 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          />
+          <span className="text-muted-foreground text-sm">to</span>
+          <label htmlFor="toDate" className="sr-only">To date</label>
+          <input
+            id="toDate"
+            type="date"
+            value={toDate}
+            onChange={(e) => {
+              setToDate(e.target.value);
+              setPage(1);
+            }}
+            className="px-3 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          />
+        </div>
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg hover:bg-white/5 transition-colors"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -185,35 +239,8 @@ export default function AuditLogsPage() {
         <EmptyState icon={ScrollText} title="No matching events" description="No security events match your current search or filter." />
       ) : (
         <>
-          <DataTable columns={columns} rows={pageRows} rowKey={(e) => e.id} />
-          <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Showing {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                aria-label="Previous page"
-                className="p-2 rounded-lg hover:bg-white/5 disabled:opacity-40"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                aria-label="Next page"
-                className="p-2 rounded-lg hover:bg-white/5 disabled:opacity-40"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
+          <DataTable columns={columns} rows={pageRows} rowKey={(e) => e.id} stickyHeader maxHeight="65vh" />
+          <Pagination page={page} totalPages={totalPages} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         </>
       )}
     </div>

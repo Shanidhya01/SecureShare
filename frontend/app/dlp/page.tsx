@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { apiErrorStatus } from "@/lib/errors";
-import { Eye, ShieldAlert, Ban, Fingerprint, BarChart3, AlertCircle } from "lucide-react";
+import { Eye, ShieldAlert, Ban, Fingerprint, BarChart3, AlertCircle, Mail, CreditCard, KeyRound, Lock, FileKey, ShieldCheck, Search } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { motion } from "framer-motion";
 import PageHeader from "@/components/design/PageHeader";
@@ -13,6 +12,7 @@ import StatusBadge, { severityTone, decisionTone } from "@/components/design/Sta
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import { apiErrorStatus } from "@/lib/errors";
 import { staggerContainer } from "@/lib/motion";
 
 type Severity = "None" | "Low" | "Medium" | "High" | "Critical";
@@ -51,12 +51,31 @@ const decisionLabel: Record<Decision, string> = {
   block: "Blocked",
 };
 
+// Real backend/services/dlp/detectors ids, grouped into the category cards the spec asks for.
+// Anything not in one of these buckets (phone, aadhaar, pan, passport, jwt_token) still shows up
+// in the "Top Detected Secret Types" chart and scan history, just not as its own summary card.
+const CATEGORY_DEFS = [
+  { key: "emails", label: "Emails", icon: Mail, detectorIds: ["email"] },
+  { key: "creditCards", label: "Credit Cards", icon: CreditCard, detectorIds: ["credit_card"] },
+  {
+    key: "apiKeys",
+    label: "API Keys",
+    icon: KeyRound,
+    detectorIds: ["aws_access_key", "aws_secret_key", "github_token", "gitlab_token", "google_api_key", "openai_api_key"],
+  },
+  { key: "passwords", label: "Passwords", icon: Lock, detectorIds: ["password_assignment", "env_secret"] },
+  { key: "privateKeys", label: "Private Keys", icon: FileKey, detectorIds: ["pem_private_key"] },
+  { key: "certificates", label: "Certificates", icon: ShieldCheck, detectorIds: ["certificate"] },
+] as const;
+
 export default function DLPCenterPage() {
   const router = useRouter();
   const [scans, setScans] = useState<ScanEntry[]>([]);
   const [stats, setStats] = useState<DLPStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
 
   const fetchAll = useCallback(
     async (token: string) => {
@@ -92,7 +111,6 @@ export default function DLPCenterPage() {
   }, [fetchAll, router]);
 
   const blockedScans = scans.filter((s) => s.decision === "block");
-  const violationScans = scans.filter((s) => s.decision !== "allow" && s.findings.length > 0);
 
   const formatDate = (d: string) => new Date(d).toLocaleString();
   const formatBytes = (n?: number) => {
@@ -101,6 +119,35 @@ export default function DLPCenterPage() {
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const def of CATEGORY_DEFS) counts[def.key] = 0;
+    for (const s of scans) {
+      for (const f of s.findings) {
+        for (const def of CATEGORY_DEFS) {
+          if ((def.detectorIds as readonly string[]).includes(f.detectorId)) {
+            counts[def.key] += f.count;
+          }
+        }
+      }
+    }
+    return counts;
+  }, [scans]);
+
+  const filteredScans = useMemo(() => {
+    return scans.filter((s) => {
+      if (severityFilter !== "all" && s.severity !== severityFilter) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        (s.originalFilename || "").toLowerCase().includes(q) ||
+        s.matchedPatterns.some((p) => p.toLowerCase().includes(q))
+      );
+    });
+  }, [scans, search, severityFilter]);
+
+  const violationScans = filteredScans.filter((s) => s.decision !== "allow" && s.findings.length > 0);
 
   const severityData = stats
     ? (Object.keys(stats.bySeverity) as Severity[]).filter((k) => k !== "None" && stats.bySeverity[k] > 0).map((k) => ({ name: k, value: stats.bySeverity[k] }))
@@ -150,6 +197,15 @@ export default function DLPCenterPage() {
               <StatCard label="Clean Rate" value={stats.totalScans > 0 ? `${Math.round(((stats.totalScans - stats.policyViolations) / stats.totalScans) * 100)}%` : "100%"} icon={Eye} variant="success" />
             </motion.div>
           )}
+
+          <section>
+            <h2 className="text-lg font-bold text-foreground mb-4">Sensitive Data Categories</h2>
+            <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              {CATEGORY_DEFS.map((def) => (
+                <StatCard key={def.key} label={def.label} value={categoryCounts[def.key]} icon={def.icon} variant="purple" />
+              ))}
+            </motion.div>
+          </section>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {stats && stats.topDetectedTypes.length > 0 && (
@@ -217,12 +273,36 @@ export default function DLPCenterPage() {
           </section>
 
           <section>
-            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
-              <ShieldAlert size={20} className="text-warning" />
-              Sensitive Data Findings
-            </h2>
+            <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
+                <ShieldAlert size={20} className="text-warning" />
+                Sensitive Data Findings
+              </h2>
+              <div className="flex gap-2">
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-2.5 text-muted-foreground" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search filename or pattern..."
+                    className="pl-8 pr-3 py-2 bg-card border border-border rounded-lg text-xs text-foreground placeholder-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 w-56"
+                  />
+                </div>
+                <select
+                  aria-label="Filter by severity"
+                  value={severityFilter}
+                  onChange={(e) => setSeverityFilter(e.target.value)}
+                  className="px-3 py-2 bg-card border border-border rounded-lg text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                >
+                  <option value="all">All severities</option>
+                  {(["Low", "Medium", "High", "Critical"] as Severity[]).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             {violationScans.length === 0 ? (
-              <EmptyState icon={ShieldAlert} title="No sensitive data detected" description="Nothing in your uploads has triggered a DLP finding." />
+              <EmptyState icon={ShieldAlert} title="No sensitive data detected" description="Nothing matches your current search/filter." />
             ) : (
               <div className="space-y-2">
                 {violationScans.map((s) => (
@@ -252,7 +332,7 @@ export default function DLPCenterPage() {
               <Fingerprint size={20} className="text-primary" />
               Scan History
             </h2>
-            <DataTable columns={columns} rows={scans} rowKey={(s) => s._id} emptyLabel="No scans yet - text-based files are scanned automatically before upload." />
+            <DataTable columns={columns} rows={filteredScans} rowKey={(s) => s._id} emptyLabel="No scans yet - text-based files are scanned automatically before upload." />
           </section>
         </div>
       )}

@@ -10,6 +10,7 @@ import { navItems } from "./navItems";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -116,20 +117,22 @@ export default function Topbar() {
             )}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>Recent security events</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {events.length === 0 ? (
-              <p className="px-2 py-3 text-sm text-muted-foreground">No recent activity.</p>
-            ) : (
-              events.map((e) => (
-                <DropdownMenuItem key={e.id} className="flex-col items-start gap-0.5 whitespace-normal">
-                  <span className="text-xs text-foreground">{e.message}</span>
-                  <span className="text-[11px] text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span>
-                </DropdownMenuItem>
-              ))
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/audit")}>View all in Audit Logs</DropdownMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Recent security events</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {events.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">No recent activity.</p>
+              ) : (
+                events.map((e) => (
+                  <DropdownMenuItem key={e.id} className="flex-col items-start gap-0.5 whitespace-normal">
+                    <span className="text-xs text-foreground">{e.message}</span>
+                    <span className="text-[11px] text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => router.push("/audit")}>View all in Audit Logs</DropdownMenuItem>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -146,18 +149,20 @@ export default function Topbar() {
             </span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>{user?.email || "Signed in"}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/settings")}>
-              <Settings size={14} /> Settings
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/security")}>
-              <ShieldCheck size={14} /> Security Center
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={logout}>
-              <LogOut size={14} /> Logout
-            </DropdownMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{user?.email || "Signed in"}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => router.push("/settings")}>
+                <Settings size={14} /> Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/security")}>
+                <ShieldCheck size={14} /> Security Center
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={logout}>
+                <LogOut size={14} /> Logout
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

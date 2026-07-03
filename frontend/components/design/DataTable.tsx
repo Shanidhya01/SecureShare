@@ -24,23 +24,33 @@ export default function DataTable<T>({
   rows,
   rowKey,
   emptyLabel = "No data yet.",
+  stickyHeader = false,
+  maxHeight,
 }: {
   columns: DataTableColumn<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   emptyLabel?: string;
+  /** Keeps the header row visible while the table body scrolls - useful for long lists like Audit Logs. */
+  stickyHeader?: boolean;
+  /** Caps the scrollable body height (e.g. "60vh") when stickyHeader is enabled. */
+  maxHeight?: string;
 }) {
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden">
-      <div className="overflow-x-auto scrollbar-thin">
+      <div
+        className="overflow-x-auto scrollbar-thin"
+        style={stickyHeader ? { maxHeight: maxHeight || "60vh", overflowY: "auto" } : undefined}
+      >
         <Table>
-          <TableHeader>
+          <TableHeader className={stickyHeader ? "sticky top-0 z-10 bg-card" : undefined}>
             <TableRow className="hover:bg-transparent">
               {columns.map((col) => (
                 <TableHead
                   key={col.key}
                   className={cn(
                     "text-xs uppercase tracking-wide text-muted-foreground",
+                    stickyHeader && "bg-card",
                     col.align === "right" && "text-right",
                     col.className
                   )}

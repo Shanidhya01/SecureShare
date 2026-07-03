@@ -6,6 +6,7 @@ import {
   Eye,
   ShieldCheck,
   ScrollText,
+  BarChart3,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -23,6 +24,7 @@ export const navItems: NavItem[] = [
   { label: "Threat Center", href: "/threats", icon: ScanSearch },
   { label: "DLP Center", href: "/dlp", icon: Eye },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
+  { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Audit Logs", href: "/audit", icon: ScrollText },
   { label: "Settings", href: "/settings", icon: Settings },
 ];

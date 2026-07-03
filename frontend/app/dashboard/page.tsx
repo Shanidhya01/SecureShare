@@ -16,6 +16,12 @@ import {
   UserPlus,
   Trash2,
   LogOut,
+  Upload,
+  ScanSearch,
+  ShieldCheck,
+  ScrollText,
+  Download,
+  Activity,
 } from "lucide-react";
 import {
   AreaChart,
@@ -35,6 +41,7 @@ import PageHeader from "@/components/design/PageHeader";
 import StatCard from "@/components/design/StatCard";
 import SecurityScoreGauge from "@/components/design/SecurityScoreGauge";
 import EmptyState from "@/components/design/EmptyState";
+import EventTimeline, { type EventTimelineItem } from "@/components/design/EventTimeline";
 import { StatsSkeleton } from "@/components/design/Skeletons";
 import { computeSecurityScore } from "@/lib/securityScore";
 import { bucketByDay } from "@/lib/chartHelpers";
@@ -49,6 +56,7 @@ type FileMeta = {
   signature?: string | null;
   quarantined?: boolean;
   policy?: FilePolicy;
+  logs?: { time: string }[];
 };
 
 type ThreatStats = {
@@ -140,6 +148,8 @@ export default function DashboardOverview() {
   });
 
   const uploadTrend = bucketByDay(files, (f) => f.createdAt || new Date(), 14);
+  const allDownloadLogs = files.flatMap((f) => f.logs || []);
+  const downloadTrend = bucketByDay(allDownloadLogs, (l) => l.time, 14);
   const riskData = threatStats
     ? Object.entries(threatStats.byRiskLevel)
         .filter(([, count]) => count > 0)
@@ -166,6 +176,22 @@ export default function DashboardOverview() {
     }
   };
 
+  const securityTimeline: EventTimelineItem[] = events.map((e) => ({
+    key: e.id,
+    icon: eventIcon(e.type),
+    title: e.message,
+    timestamp: e.createdAt,
+    tone: e.type === "download_denied" ? "danger" : e.type === "session_revoked" || e.type === "device_removed" ? "warning" : "info",
+  }));
+
+  const quickActions = [
+    { label: "Upload File", href: "/upload", icon: Upload },
+    { label: "Threat Center", href: "/threats", icon: ScanSearch },
+    { label: "DLP Center", href: "/dlp", icon: Eye },
+    { label: "Security Center", href: "/security", icon: ShieldCheck },
+    { label: "Audit Logs", href: "/audit", icon: ScrollText },
+  ];
+
   return (
     <div>
       <PageHeader
@@ -183,18 +209,35 @@ export default function DashboardOverview() {
       />
 
       {loading ? (
-        <StatsSkeleton count={4} />
+        <StatsSkeleton count={5} />
       ) : (
-        <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard label="Protected Files" value={files.length} icon={FileText} variant="primary" />
           <StatCard label="Threats Blocked" value={threatStats?.malwareDetections ?? 0} icon={ShieldAlert} variant="danger" />
           <StatCard label="Trusted Devices" value={`${trustedDevices}/${devices.length}`} icon={Laptop} variant="success" />
           <StatCard label="DLP Alerts" value={dlpStats?.policyViolations ?? 0} icon={Eye} variant="purple" />
+          <StatCard label="Quarantined Files" value={threatStats?.quarantinedFiles ?? quarantinedInFiles} icon={Ban} variant="warning" />
         </motion.div>
       )}
 
+      <div className="mt-6 rounded-xl border border-border bg-card p-6">
+        <h3 className="text-sm font-semibold text-foreground mb-4">Quick Actions</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {quickActions.map((action) => (
+            <Link
+              key={action.href}
+              href={action.href}
+              className="flex flex-col items-center gap-2 rounded-lg border border-border bg-background/40 px-3 py-4 text-center hover:border-primary/40 hover:bg-white/5 transition-colors"
+            >
+              <action.icon size={20} className="text-primary" />
+              <span className="text-xs font-medium text-foreground">{action.label}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 rounded-xl border border-border bg-card p-6 flex flex-col items-center justify-center">
+        <div className="rounded-xl border border-border bg-card p-6 flex flex-col items-center justify-center">
           <h3 className="text-sm font-semibold text-foreground mb-4 self-start">Security Score</h3>
           {loading ? <div className="h-40 w-40 rounded-full bg-muted animate-pulse" /> : <SecurityScoreGauge score={securityScore} />}
           <p className="text-xs text-muted-foreground mt-4 text-center">
@@ -202,7 +245,7 @@ export default function DashboardOverview() {
           </p>
         </div>
 
-        <div className="lg:col-span-2 rounded-xl border border-border bg-card p-6">
+        <div className="rounded-xl border border-border bg-card p-6">
           <h3 className="text-sm font-semibold text-foreground mb-4">Uploads (last 14 days)</h3>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={uploadTrend}>
@@ -217,6 +260,28 @@ export default function DashboardOverview() {
               <YAxis stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
               <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
               <Area type="monotone" dataKey="count" stroke="#2563EB" fill="url(#uploadGradient)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-6">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground mb-4">
+            <Download size={14} className="text-success" />
+            Downloads (last 14 days)
+          </h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={downloadTrend}>
+              <defs>
+                <linearGradient id="downloadGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10B981" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+              <XAxis dataKey="date" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+              <Area type="monotone" dataKey="count" stroke="#10B981" fill="url(#downloadGradient)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -279,6 +344,14 @@ export default function DashboardOverview() {
             </ul>
           )}
         </div>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-border bg-card p-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground mb-4">
+          <Activity size={16} className="text-primary" />
+          Security Timeline
+        </h3>
+        <EventTimeline items={securityTimeline} emptyLabel="No security events recorded yet." />
       </div>
 
       <div className="mt-6 rounded-xl border border-border bg-card p-6">

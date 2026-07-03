@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { apiErrorStatus } from "@/lib/errors";
-import { ShieldAlert, Bug, Ban, ScanSearch, AlertCircle, Fingerprint, RotateCcw } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts";
+import { ShieldAlert, Bug, Ban, ScanSearch, AlertCircle, Fingerprint, RotateCcw, Radar } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
 import StatCard from "@/components/design/StatCard";
 import StatusBadge, { riskTone } from "@/components/design/StatusBadge";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
+import EventTimeline, { type EventTimelineItem } from "@/components/design/EventTimeline";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import { apiErrorStatus } from "@/lib/errors";
 import { bucketByDay } from "@/lib/chartHelpers";
 import { motion } from "framer-motion";
 import { staggerContainer } from "@/lib/motion";
@@ -126,6 +127,47 @@ export default function ThreatCenterPage() {
     ? (Object.keys(stats.byRiskLevel) as RiskLevel[]).filter((k) => stats.byRiskLevel[k] > 0).map((k) => ({ name: k, value: stats.byRiskLevel[k] }))
     : [];
   const scanTrend = bucketByDay(scans, (s) => s.createdAt, 14);
+
+  const topThreatTypes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of scans) {
+      for (const name of s.clamav?.threatNames || []) counts.set(name, (counts.get(name) || 0) + 1);
+      for (const name of s.virusTotal?.threatNames || []) counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, count]) => ({ name, count }));
+  }, [scans]);
+
+  const threatFeed: EventTimelineItem[] = useMemo(() => {
+    const quarantineEvents: EventTimelineItem[] = quarantined.map((f) => ({
+      key: `q-${f._id}`,
+      icon: Ban,
+      title: `${f.filename} quarantined`,
+      description: f.scanId?.clamav?.threatNames?.length ? f.scanId.clamav.threatNames.join(", ") : "Flagged by threat scanner",
+      timestamp: f.createdAt,
+      tone: "danger",
+      badgeLabel: f.riskLevel || "Low",
+    }));
+    const malwareEvents: EventTimelineItem[] = malwareDetections.map((s) => ({
+      key: `m-${s._id}`,
+      icon: Bug,
+      title: `${s.originalFilename || "File"} flagged as malware`,
+      description:
+        s.clamav?.status === "infected"
+          ? `ClamAV: ${s.clamav.threatNames.join(", ")}`
+          : s.virusTotal?.status === "malicious"
+          ? `VirusTotal: ${s.virusTotal.maliciousCount}/${s.virusTotal.totalEngines} engines flagged`
+          : undefined,
+      timestamp: s.createdAt,
+      tone: "warning",
+      badgeLabel: s.riskLevel,
+    }));
+    return [...quarantineEvents, ...malwareEvents]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 10);
+  }, [quarantined, malwareDetections]);
 
   const columns: DataTableColumn<ScanEntry>[] = [
     {
@@ -256,6 +298,34 @@ export default function ThreatCenterPage() {
             </div>
           </div>
 
+          {topThreatTypes.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground mb-4">
+                <Radar size={16} className="text-destructive" />
+                Top Threat Types
+              </h3>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={topThreatTypes} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" horizontal={false} />
+                  <XAxis type="number" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} width={130} />
+                  <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+                  <Bar dataKey="count" fill="#EF4444" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Radar size={20} className="text-destructive" />
+              Threat Timeline
+            </h2>
+            <div className="rounded-xl border border-border bg-card p-5">
+              <EventTimeline items={threatFeed} emptyLabel="No threat activity recorded yet." />
+            </div>
+          </section>
+
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
               <Ban size={20} className="text-destructive" />
@@ -299,7 +369,7 @@ export default function ThreatCenterPage() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
               <ShieldAlert size={20} className="text-warning" />
-              Malware Detections
+              Recent Malware Detections
             </h2>
             {malwareDetections.length === 0 ? (
               <EmptyState icon={ShieldAlert} title="No malware detected" description="Nothing in your uploads has triggered a malware detection." />

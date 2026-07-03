@@ -16,6 +16,7 @@ import {
   List,
   X,
   FileText,
+  User,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -52,11 +53,18 @@ export default function FileCard({
   onDelete,
   onPermanentDelete,
   canManage,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   file: FileDoc;
   onDelete?: (fileId: string) => void;
   onPermanentDelete?: (fileId: string) => void;
   canManage?: boolean;
+  /** Bulk-selection mode (Files page) - shows a checkbox and highlights the card when selected. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (fileId: string) => void;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -232,8 +240,21 @@ export default function FileCard({
   return (
     <motion.div
       variants={fadeInUp}
-      className="group bg-card border border-border rounded-xl p-6 hover:border-primary/40 transition-all hover:shadow-lg hover:shadow-primary/10"
+      className={`group relative bg-card border rounded-xl p-6 transition-all hover:shadow-lg hover:shadow-primary/10 ${
+        selected ? "border-primary ring-2 ring-primary/40" : "border-border hover:border-primary/40"
+      }`}
     >
+      {selectable && (
+        <label className="absolute top-5 left-5 z-10 inline-flex h-5 w-5 cursor-pointer items-center justify-center">
+          <span className="sr-only">Select {file.filename}</span>
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect?.(file._id)}
+            className="h-5 w-5 rounded border-border text-primary focus-visible:ring-2 focus-visible:ring-primary/60"
+          />
+        </label>
+      )}
       {showPwdModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-card border border-border rounded-xl w-full max-w-sm p-6 shadow-xl">
@@ -289,7 +310,7 @@ export default function FileCard({
       )}
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-3 gap-2">
+      <div className={`flex items-start justify-between mb-3 gap-2 ${selectable ? "pl-7" : ""}`}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <FileText size={18} className="text-primary shrink-0" />
@@ -299,6 +320,12 @@ export default function FileCard({
             {file.mimeType || "Unknown type"}
             {file.createdAt && ` · Uploaded ${new Date(file.createdAt).toLocaleDateString()}`}
           </p>
+          {file.owner?.email && (
+            <p className="text-xs text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+              <User size={11} />
+              {file.owner.name || file.owner.email}
+            </p>
+          )}
         </div>
         <StatusBadge label={status.label} tone={status.tone} />
       </div>

@@ -4,13 +4,15 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { apiErrorStatus } from "@/lib/errors";
-import { ShieldCheck, Laptop, Trash2, Monitor, Clock, AlertCircle, Ban, UserPlus, KeyRound, LogOut } from "lucide-react";
+import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn } from "lucide-react";
 import toast from "react-hot-toast";
 import { motion } from "framer-motion";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import SecurityScoreGauge from "@/components/design/SecurityScoreGauge";
+import StatusBadge from "@/components/design/StatusBadge";
+import EventTimeline, { type EventTimelineItem } from "@/components/design/EventTimeline";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
 import { computeSecurityScore } from "@/lib/securityScore";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
@@ -156,6 +158,28 @@ export default function SecurityCenterPage() {
   const activityEvents = events.filter((e) => e.type !== "download_denied");
   const trustedDevices = devices.filter((d) => d.trusted).length;
 
+  const recentLogins: EventTimelineItem[] = [...sessions]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 8)
+    .map((s) => ({
+      key: s.sessionId,
+      icon: LogIn,
+      title: `${s.browser || "Unknown browser"} on ${s.operatingSystem || "Unknown OS"}`,
+      description: `${s.ip || "unknown IP"}${s.country && s.country !== "Unknown" ? ` · ${s.country}` : ""}`,
+      timestamp: s.createdAt,
+      tone: s.isCurrent ? "success" : "neutral",
+      badgeLabel: s.isCurrent ? "Current" : undefined,
+    }));
+
+  const activityTimeline: EventTimelineItem[] = activityEvents.map((e) => ({
+    key: e.id,
+    icon: eventIcon(e.type),
+    title: e.message,
+    description: e.ip ? `${e.ip}${e.country && e.country !== "Unknown" ? ` · ${e.country}` : ""}` : undefined,
+    timestamp: e.createdAt,
+    tone: e.type === "session_revoked" || e.type === "device_removed" ? "warning" : "info",
+  }));
+
   const securityScore = computeSecurityScore({
     totalDevices: devices.length,
     trustedDevices,
@@ -178,7 +202,7 @@ export default function SecurityCenterPage() {
       render: (s) => (
         <>
           {s.browser || "Unknown"} / {s.operatingSystem || "Unknown"}
-          {s.isCurrent && <span className="ml-2"><StatusBadgeInline label="Current" /></span>}
+          {s.isCurrent && <span className="ml-2"><StatusBadge label="Current" tone="success" /></span>}
         </>
       ),
     },
@@ -246,7 +270,7 @@ export default function SecurityCenterPage() {
                       <div className="min-w-0">
                         <p className="font-semibold text-foreground truncate">
                           {d.label || `${d.browser || "Unknown"} on ${d.operatingSystem || "Unknown"}`}
-                          {d.isCurrent && <span className="ml-2"><StatusBadgeInline label="This device" /></span>}
+                          {d.isCurrent && <span className="ml-2"><StatusBadge label="This device" tone="success" /></span>}
                         </p>
                         <p className="text-muted-foreground text-xs mt-1">Last seen {formatDate(d.lastSeenAt)}</p>
                         {d.lastIp && <p className="text-muted-foreground/70 text-xs font-mono">{d.lastIp}</p>}
@@ -274,6 +298,16 @@ export default function SecurityCenterPage() {
               Active Sessions
             </h2>
             <DataTable columns={sessionColumns} rows={sessions} rowKey={(s) => s.sessionId} emptyLabel="No active sessions recorded." />
+          </section>
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <LogIn size={20} className="text-primary" />
+              Recent Logins
+            </h2>
+            <div className="rounded-xl border border-border bg-card p-5">
+              <EventTimeline items={recentLogins} emptyLabel="No login history recorded yet." />
+            </div>
           </section>
 
           <section>
@@ -313,36 +347,13 @@ export default function SecurityCenterPage() {
             {activityEvents.length === 0 ? (
               <EmptyState icon={KeyRound} title="No events yet" description="Security events will appear here as they happen." />
             ) : (
-              <div className="space-y-2">
-                {activityEvents.map((e) => {
-                  const Icon = eventIcon(e.type);
-                  return (
-                    <div key={e.id} className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3">
-                      <Icon size={16} className="text-primary shrink-0 mt-0.5" />
-                      <div className="min-w-0">
-                        <p className="text-foreground text-sm">{e.message}</p>
-                        <p className="text-muted-foreground text-xs mt-1 flex items-center gap-2">
-                          <Clock size={12} />
-                          {formatDate(e.createdAt)}
-                          {e.ip ? ` · ${e.ip}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="rounded-xl border border-border bg-card p-5">
+                <EventTimeline items={activityTimeline} />
               </div>
             )}
           </section>
         </div>
       )}
     </div>
-  );
-}
-
-function StatusBadgeInline({ label }: { label: string }) {
-  return (
-    <span className="text-[10px] font-bold uppercase tracking-wide text-success bg-success/10 ring-1 ring-success/30 rounded-full px-2 py-0.5">
-      {label}
-    </span>
   );
 }

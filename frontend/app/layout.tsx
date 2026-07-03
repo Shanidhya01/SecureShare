@@ -4,6 +4,7 @@ import "./globals.css";
 import AppShell from "@/components/shell/AppShell";
 import ToasterClient from "@/components/ToasterClient";
 import { CryptoKeyProvider } from "@/context/CryptoKeyContext";
+import { ThemeProvider, noFlashThemeScript } from "@/context/ThemeContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistSans = Geist({
@@ -27,16 +28,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Applies the persisted theme class before hydration to avoid a flash of the wrong theme. */}
+        <script dangerouslySetInnerHTML={{ __html: noFlashThemeScript }} />
+      </head>
       <body
-        className={`dark ${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <CryptoKeyProvider>
-          <TooltipProvider>
-            <AppShell>{children}</AppShell>
-            <ToasterClient />
-          </TooltipProvider>
-        </CryptoKeyProvider>
+        <ThemeProvider>
+          <CryptoKeyProvider>
+            <TooltipProvider>
+              <AppShell>{children}</AppShell>
+              <ToasterClient />
+            </TooltipProvider>
+          </CryptoKeyProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

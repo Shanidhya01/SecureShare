@@ -50,10 +50,50 @@
 
 /*
  * SecureShare enterprise security design system.
- * Dark-only by design (matches every Defender/Purview/Falcon-style console) - the same palette
- * is used for :root and .dark so the app looks correct whether or not a "dark" class is present.
+ * Dark is the primary, default enterprise-security aesthetic; a light variant is available via
+ * the Settings > Appearance toggle (context/ThemeContext.tsx applies/removes the `.dark` class
+ * on <html>, persisted to localStorage - no server/theme endpoint involved).
  */
-:root,
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #2563eb;
+  --primary-foreground: #f8fafc;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --destructive: #dc2626;
+  --destructive-foreground: #f8fafc;
+  --success: #059669;
+  --success-foreground: #f8fafc;
+  --warning: #d97706;
+  --warning-foreground: #451a03;
+  --border: rgba(15, 23, 42, 0.1);
+  --input: rgba(15, 23, 42, 0.14);
+  --ring: #2563eb;
+  --chart-1: #2563eb;
+  --chart-2: #059669;
+  --chart-3: #d97706;
+  --chart-4: #dc2626;
+  --chart-5: #9333ea;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #f8fafc;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #0f172a;
+  --sidebar-border: rgba(15, 23, 42, 0.1);
+  --sidebar-ring: #2563eb;
+}
+
 .dark {
   --background: #020617;
   --foreground: #e2e8f0;
@@ -110,6 +150,9 @@
   }
   html {
     @apply font-sans;
+    color-scheme: light;
+  }
+  html.dark {
     color-scheme: dark;
   }
 }

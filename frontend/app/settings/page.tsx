@@ -5,11 +5,29 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
 import toast from "react-hot-toast";
-import { Settings as SettingsIcon, User, ShieldCheck, Sliders, Bell, TriangleAlert, KeyRound, LogOut, Trash2 } from "lucide-react";
+import {
+  Settings as SettingsIcon,
+  User,
+  ShieldCheck,
+  Sliders,
+  Bell,
+  TriangleAlert,
+  KeyRound,
+  LogOut,
+  Trash2,
+  Palette,
+  Sun,
+  Moon,
+  Download,
+  Lock,
+  UserX,
+  Info,
+} from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import PageHeader from "@/components/design/PageHeader";
 import { useCryptoKey } from "@/context/CryptoKeyContext";
+import { useTheme } from "@/context/ThemeContext";
 import { clearPrivateKeyIndexedDB } from "@/lib/crypto/keyStorage";
 import { sha256Base64 } from "@/lib/crypto/hash";
 import { base64ToBuf } from "@/lib/crypto/base64";
@@ -32,11 +50,13 @@ function loadPrefs(): Record<PrefKey, boolean> {
 export default function SettingsPage() {
   const router = useRouter();
   const { lock } = useCryptoKey();
+  const { theme, setTheme } = useTheme();
   const [user, setUser] = useState<{ email?: string; name?: string } | null>(null);
   const [fingerprint, setFingerprint] = useState<string>("");
   const [prefs, setPrefs] = useState<Record<PrefKey, boolean>>(loadPrefs());
   const [revoking, setRevoking] = useState(false);
   const [clearingKeys, setClearingKeys] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem("user");
@@ -62,6 +82,53 @@ export default function SettingsPage() {
     const next = { ...prefs, [key]: value };
     setPrefs(next);
     localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(next));
+  };
+
+  /** Bundles everything the frontend can already read via existing GET endpoints (files, threat
+   *  scans, DLP scans, security events, devices, sessions) into a single downloadable JSON file.
+   *  There's no backend export endpoint - this is a real, working export of your visible data,
+   *  assembled entirely client-side from calls already used elsewhere in the app. */
+  const handleExportData = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    setExporting(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [files, threatScans, dlpScans, securityEvents, devices, sessions] = await Promise.all([
+        api.get("/files/my-files", { headers }).then((r) => r.data).catch(() => []),
+        api.get("/threats/scans", { headers }).then((r) => r.data).catch(() => []),
+        api.get("/dlp/scans", { headers }).then((r) => r.data).catch(() => []),
+        api.get("/security/events", { headers }).then((r) => r.data).catch(() => []),
+        api.get("/devices", { headers }).then((r) => r.data).catch(() => []),
+        api.get("/sessions", { headers }).then((r) => r.data).catch(() => []),
+      ]);
+
+      const bundle = {
+        exportedAt: new Date().toISOString(),
+        account: user,
+        files,
+        threatScans,
+        dlpScans,
+        securityEvents,
+        devices,
+        sessions,
+      };
+
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `secureshare-data-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Your data export has been downloaded");
+    } catch {
+      toast.error("Failed to export your data");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleRevokeAllSessions = async () => {
@@ -104,8 +171,9 @@ export default function SettingsPage() {
         <TabsList variant="line" className="mb-6 border-b border-border w-full justify-start overflow-x-auto">
           <TabsTrigger value="profile" className="gap-1.5"><User size={14} /> Profile</TabsTrigger>
           <TabsTrigger value="security" className="gap-1.5"><ShieldCheck size={14} /> Security</TabsTrigger>
-          <TabsTrigger value="preferences" className="gap-1.5"><Sliders size={14} /> Preferences</TabsTrigger>
           <TabsTrigger value="notifications" className="gap-1.5"><Bell size={14} /> Notifications</TabsTrigger>
+          <TabsTrigger value="appearance" className="gap-1.5"><Palette size={14} /> Appearance</TabsTrigger>
+          <TabsTrigger value="preferences" className="gap-1.5"><Sliders size={14} /> Preferences</TabsTrigger>
           <TabsTrigger value="danger" className="gap-1.5"><TriangleAlert size={14} /> Danger Zone</TabsTrigger>
         </TabsList>
 
@@ -132,17 +200,77 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="security">
-          <div className="rounded-xl border border-border bg-card p-6">
-            <p className="text-sm text-muted-foreground mb-4">
-              Manage trusted devices, active sessions, and blocked access attempts from the Security Center.
-            </p>
-            <Link
-              href="/security"
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-white font-semibold rounded-lg text-sm transition-colors"
-            >
-              <ShieldCheck size={16} />
-              Open Security Center
-            </Link>
+          <div className="space-y-6">
+            <div className="rounded-xl border border-border bg-card p-6">
+              <p className="text-sm text-muted-foreground mb-4">
+                Manage trusted devices, active sessions, and blocked access attempts from the Security Center.
+              </p>
+              <Link
+                href="/security"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-white font-semibold rounded-lg text-sm transition-colors"
+              >
+                <ShieldCheck size={16} />
+                Open Security Center
+              </Link>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-foreground font-semibold text-sm flex items-center gap-2">
+                    <Lock size={14} className="text-muted-foreground" /> Change password
+                  </p>
+                  <p className="text-muted-foreground text-xs mt-1 max-w-md flex items-start gap-1.5">
+                    <Info size={12} className="shrink-0 mt-0.5" />
+                    Not available yet - there&apos;s no backend endpoint for changing your password. Coming in a
+                    future update.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled
+                  title="Not available - no backend endpoint yet"
+                  className="px-4 py-2 text-sm font-semibold text-muted-foreground bg-muted rounded-lg cursor-not-allowed shrink-0"
+                >
+                  Change Password
+                </button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="appearance">
+          <div className="rounded-xl border border-border bg-card p-6 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-foreground font-medium text-sm">Theme</p>
+                <p className="text-muted-foreground text-xs mt-0.5 max-w-md">
+                  Switch between SecureShare&apos;s dark enterprise palette and a light variant. Saved on this device.
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-background p-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setTheme("light")}
+                  aria-pressed={theme === "light"}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    theme === "light" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Sun size={14} /> Light
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTheme("dark")}
+                  aria-pressed={theme === "dark"}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    theme === "dark" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Moon size={14} /> Dark
+                </button>
+              </div>
+            </div>
           </div>
         </TabsContent>
 
@@ -154,9 +282,6 @@ export default function SettingsPage() {
               checked={prefs.compactTables}
               onChange={(v) => updatePref("compactTables", v)}
             />
-            <p className="text-xs text-muted-foreground">
-              Theme is fixed to SecureShare&apos;s dark enterprise palette for consistency across every security console.
-            </p>
           </div>
         </TabsContent>
 
@@ -181,6 +306,30 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="danger">
+          <div className="space-y-6">
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-foreground font-semibold text-sm flex items-center gap-2">
+                    <Download size={14} className="text-primary" /> Export my data
+                  </p>
+                  <p className="text-muted-foreground text-xs mt-1 max-w-md">
+                    Downloads a JSON bundle of everything visible to your account: files, threat scans, DLP scans,
+                    security events, devices, and sessions.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExportData}
+                  disabled={exporting}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-primary hover:bg-primary/90 rounded-lg disabled:opacity-50 shrink-0"
+                >
+                  <Download size={14} />
+                  {exporting ? "Exporting..." : "Export Data"}
+                </button>
+              </div>
+            </div>
+
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 space-y-5">
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div>
@@ -219,6 +368,28 @@ export default function SettingsPage() {
                 {clearingKeys ? "Clearing..." : "Clear Keys"}
               </button>
             </div>
+
+            <div className="flex items-start justify-between gap-4 flex-wrap pt-5 border-t border-destructive/20">
+              <div>
+                <p className="text-foreground font-semibold text-sm flex items-center gap-2">
+                  <UserX size={14} className="text-destructive" /> Delete account
+                </p>
+                <p className="text-muted-foreground text-xs mt-1 max-w-md flex items-start gap-1.5">
+                  <Info size={12} className="shrink-0 mt-0.5" />
+                  Not available yet - there&apos;s no backend endpoint for account deletion. Export your data above
+                  first if you plan to stop using this device.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled
+                title="Not available - no backend endpoint yet"
+                className="px-4 py-2 text-sm font-semibold text-muted-foreground bg-muted rounded-lg cursor-not-allowed shrink-0"
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
           </div>
         </TabsContent>
       </Tabs>
