@@ -1,252 +1,317 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import api from "@/lib/api";
-import FileCard from "@/components/FileCard";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { motion } from "framer-motion";
 import {
-  Loader,
-  AlertCircle,
-  Upload,
+  LayoutDashboard,
   FileText,
-  Clock,
-  Download
+  ShieldAlert,
+  Laptop,
+  Ban,
+  Eye,
+  FileCheck2,
+  ArrowRight,
+  UserPlus,
+  Trash2,
+  LogOut,
 } from "lucide-react";
-import toast from "react-hot-toast";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  CartesianGrid,
+} from "recharts";
+import PageHeader from "@/components/design/PageHeader";
+import StatCard from "@/components/design/StatCard";
+import SecurityScoreGauge from "@/components/design/SecurityScoreGauge";
+import EmptyState from "@/components/design/EmptyState";
+import { StatsSkeleton } from "@/components/design/Skeletons";
+import { computeSecurityScore } from "@/lib/securityScore";
+import { bucketByDay } from "@/lib/chartHelpers";
+import { apiErrorStatus } from "@/lib/errors";
+import { fadeInUp, staggerContainer } from "@/lib/motion";
+import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
 
-export default function Dashboard() {
-  type FileMeta = {
-    _id: string;
-    filename: string;
-    expiresAt: string;
-    oneTime: boolean;
-    downloadCount: number;
-    revoked?: boolean;
-    owner?: { email?: string; name?: string };
-    passwordHash?: string;
-    wrappedPasswordKey?: string;
-    encryptionVersion?: number;
-    mimeType?: string;
-  };
+type FileMeta = {
+  _id: string;
+  filename: string;
+  createdAt?: string;
+  signature?: string | null;
+  quarantined?: boolean;
+  policy?: FilePolicy;
+};
 
-  const [files, setFiles] = useState<FileMeta[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [sortBy, setSortBy] =
-    useState<"date" | "name" | "downloads">("date");
-  const [filterOneTime, setFilterOneTime] = useState(false);
+type ThreatStats = {
+  totalScans: number;
+  quarantinedFiles: number;
+  malwareDetections: number;
+  byRiskLevel: Record<string, number>;
+};
+
+type DLPStats = {
+  totalScans: number;
+  policyViolations: number;
+  blockedUploads: number;
+  bySeverity: Record<string, number>;
+};
+
+type DeviceEntry = { deviceId: string; trusted: boolean };
+type SecurityEventEntry = { id: string; type: string; message: string; createdAt: string };
+
+const RISK_COLORS: Record<string, string> = {
+  Low: "#10B981",
+  Medium: "#F59E0B",
+  High: "#F59E0B",
+  Critical: "#EF4444",
+};
+
+export default function DashboardOverview() {
   const router = useRouter();
+  const [files, setFiles] = useState<FileMeta[]>([]);
+  const [threatStats, setThreatStats] = useState<ThreatStats | null>(null);
+  const [dlpStats, setDlpStats] = useState<DLPStats | null>(null);
+  const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [events, setEvents] = useState<SecurityEventEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const userRaw =
-    typeof window !== "undefined" ? localStorage.getItem("user") : null;
-  const user = userRaw ? JSON.parse(userRaw) : null;
-
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const fetchAll = useCallback(
+    async (token: string) => {
+      try {
+        setLoading(true);
+        const [filesRes, threatRes, dlpRes, devicesRes, eventsRes] = await Promise.all([
+          api.get<FileMeta[]>("/files/my-files", { headers: { Authorization: `Bearer ${token}` } }),
+          api.get<ThreatStats>("/threats/stats", { headers: { Authorization: `Bearer ${token}` } }),
+          api.get<DLPStats>("/dlp/stats", { headers: { Authorization: `Bearer ${token}` } }),
+          api.get<DeviceEntry[]>("/devices", { headers: { Authorization: `Bearer ${token}` } }),
+          api.get<SecurityEventEntry[]>("/security/events", { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        setFiles(filesRes.data || []);
+        setThreatStats(threatRes.data || null);
+        setDlpStats(dlpRes.data || null);
+        setDevices(devicesRes.data || []);
+        setEvents((eventsRes.data || []).slice(0, 8));
+      } catch (err: unknown) {
+        const status = apiErrorStatus(err);
+        if (status === 401 || status === 403) {
+          router.push("/login");
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [router]
+  );
 
   useEffect(() => {
+    const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
       return;
     }
+    fetchAll(token);
+  }, [fetchAll, router]);
 
-    const fetchFiles = async () => {
-      try {
-        setLoading(true);
-        const res = await api.get<FileMeta[]>("/files/my-files", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        setFiles(res.data || []);
-      } catch (err: any) {
-        const status = err.response?.status;
-        if (status === 401 || status === 403) {
-          localStorage.removeItem("token");
-          localStorage.removeItem("user");
-          router.push("/login");
-          return;
-        }
+  const trustedDevices = devices.filter((d) => d.trusted).length;
+  const signedFiles = files.filter((f) => f.signature).length;
+  const policiesConfigured = files.filter((f) => hasZeroTrustPolicy(f.policy)).length;
+  const quarantinedInFiles = files.filter((f) => f.quarantined).length;
 
-        setError("Failed to load files");
-      } finally {
-        setLoading(false);
-      }
-    };
+  const securityScore = computeSecurityScore({
+    totalDevices: devices.length,
+    trustedDevices,
+    totalScans: threatStats?.totalScans ?? 0,
+    malwareDetections: threatStats?.malwareDetections ?? 0,
+    quarantinedFiles: threatStats?.quarantinedFiles ?? quarantinedInFiles,
+    dlpTotalScans: dlpStats?.totalScans ?? 0,
+    dlpViolations: dlpStats?.policyViolations ?? 0,
+    totalFiles: files.length,
+    signedFiles,
+    policiesConfigured,
+  });
 
-    fetchFiles();
-  }, [router, token]);
+  const uploadTrend = bucketByDay(files, (f) => f.createdAt || new Date(), 14);
+  const riskData = threatStats
+    ? Object.entries(threatStats.byRiskLevel)
+        .filter(([, count]) => count > 0)
+        .map(([name, value]) => ({ name, value }))
+    : [];
+  const dlpSeverityData = dlpStats
+    ? Object.entries(dlpStats.bySeverity)
+        .filter(([name, count]) => name !== "None" && count > 0)
+        .map(([name, value]) => ({ name, value }))
+    : [];
 
-  /* ---------- DELETE / REVOKE ---------- */
-  const handleDelete = async (fileId: string) => {
-    try {
-      await api.delete(`/files/file/${fileId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setFiles((prev) => prev.map((f) => f._id === fileId ? { ...f, revoked: true } : f));
-      toast.success("File revoked successfully");
-    } catch {
-      toast.error("Failed to revoke file");
+  const eventIcon = (type: string) => {
+    switch (type) {
+      case "new_device":
+        return UserPlus;
+      case "device_removed":
+        return Trash2;
+      case "session_revoked":
+        return LogOut;
+      case "download_denied":
+        return Ban;
+      default:
+        return ShieldAlert;
     }
   };
 
-  const handlePermanentDelete = (fileId: string) => {
-    // Backend permanent delete is already done in FileCard; just remove locally
-    setFiles((prev) => prev.filter((f) => f._id !== fileId));
-  };
-
-  /* ---------- SORT / FILTER ---------- */
-  const getSortedAndFilteredFiles = () => {
-    let filtered = [...files];
-    if (filterOneTime) filtered = filtered.filter((f) => f.oneTime);
-
-    return filtered.sort((a, b) => {
-      switch (sortBy) {
-        case "name":
-          return a.filename.localeCompare(b.filename);
-        case "downloads":
-          return b.downloadCount - a.downloadCount;
-        default:
-          return (
-            new Date(b.expiresAt).getTime() -
-            new Date(a.expiresAt).getTime()
-          );
-      }
-    });
-  };
-
-  const sortedFiles = getSortedAndFilteredFiles();
-  const totalDownloads = files.reduce((sum, f) => sum + f.downloadCount, 0);
-  const expiringFiles = files.filter(
-    (f) => new Date(f.expiresAt).getTime() - Date.now() < 24 * 60 * 60 * 1000
-  ).length;
-
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-      <div className="max-w-6xl mx-auto px-4 py-12">
-
-        {/* HEADER */}
-        <div className="mb-12 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-          <div>
-            <h1 className="text-4xl font-black text-transparent bg-clip-text bg-linear-to-r from-blue-400 to-cyan-400">
-              My Files
-            </h1>
-            <p className="text-slate-400">
-              Manage and share your encrypted files
-            </p>
-          </div>
-          <a
-            href="/upload"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-linear-to-r from-blue-500 to-cyan-500 rounded-lg font-bold hover:opacity-90"
+    <div>
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Dashboard"
+        description="Your security posture and activity, at a glance."
+        actions={
+          <Link
+            href="/files"
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
           >
-            <Upload size={20} />
-            Upload File
-          </a>
+            View all files <ArrowRight size={16} />
+          </Link>
+        }
+      />
+
+      {loading ? (
+        <StatsSkeleton count={4} />
+      ) : (
+        <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard label="Protected Files" value={files.length} icon={FileText} variant="primary" />
+          <StatCard label="Threats Blocked" value={threatStats?.malwareDetections ?? 0} icon={ShieldAlert} variant="danger" />
+          <StatCard label="Trusted Devices" value={`${trustedDevices}/${devices.length}`} icon={Laptop} variant="success" />
+          <StatCard label="DLP Alerts" value={dlpStats?.policyViolations ?? 0} icon={Eye} variant="purple" />
+        </motion.div>
+      )}
+
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 rounded-xl border border-border bg-card p-6 flex flex-col items-center justify-center">
+          <h3 className="text-sm font-semibold text-foreground mb-4 self-start">Security Score</h3>
+          {loading ? <div className="h-40 w-40 rounded-full bg-muted animate-pulse" /> : <SecurityScoreGauge score={securityScore} />}
+          <p className="text-xs text-muted-foreground mt-4 text-center">
+            Based on device trust, malware &amp; DLP scan history, signature usage, and access policies.
+          </p>
         </div>
 
-        {/* STATS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Stat label="Total Files" value={files.length} icon={FileText} />
-          <Stat label="Total Downloads" value={totalDownloads} icon={Download} />
-          <Stat label="Expiring Soon" value={expiringFiles} icon={Clock} />
+        <div className="lg:col-span-2 rounded-xl border border-border bg-card p-6">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Uploads (last 14 days)</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={uploadTrend}>
+              <defs>
+                <linearGradient id="uploadGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#2563EB" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+              <XAxis dataKey="date" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+              <Area type="monotone" dataKey="count" stroke="#2563EB" fill="url(#uploadGradient)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="rounded-xl border border-border bg-card p-6">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Threat Risk Levels</h3>
+          {riskData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-10 text-center">No threat scans yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={riskData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                  {riskData.map((entry) => (
+                    <Cell key={entry.name} fill={RISK_COLORS[entry.name] || "#64748B"} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
-        {/* CONTROLS */}
-        {files.length > 0 && (
-          <div className="mb-8 flex flex-col md:flex-row gap-4">
-            <select
-              aria-label="Sort files"
-              value={sortBy}
-              onChange={(e) =>
-                setSortBy(e.target.value as "date" | "name" | "downloads")
-              }
-              className="px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg"
-            >
-              <option value="date">Newest</option>
-              <option value="name">Name</option>
-              <option value="downloads">Most Downloaded</option>
-            </select>
+        <div className="rounded-xl border border-border bg-card p-6">
+          <h3 className="text-sm font-semibold text-foreground mb-4">DLP Findings by Severity</h3>
+          {dlpSeverityData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-10 text-center">No DLP findings yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={dlpSeverityData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+                <XAxis dataKey="name" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+                <Bar dataKey="value" fill="#A855F7" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
 
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={filterOneTime}
-                onChange={(e) => setFilterOneTime(e.target.checked)}
-              />
-              One-time only
-            </label>
-          </div>
-        )}
+        <div className="rounded-xl border border-border bg-card p-6">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Recent Activity</h3>
+          {events.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-10 text-center">No recent security events.</p>
+          ) : (
+            <ul className="space-y-3 max-h-52 overflow-y-auto scrollbar-thin pr-1">
+              {events.map((e) => {
+                const Icon = eventIcon(e.type);
+                return (
+                  <li key={e.id} className="flex items-start gap-2.5 text-xs">
+                    <Icon size={14} className="text-primary shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-foreground truncate">{e.message}</p>
+                      <p className="text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
 
-        {/* ERROR */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/40 rounded-lg flex gap-2">
-            <AlertCircle className="text-red-400" />
-            <p>{error}</p>
-          </div>
-        )}
-
-        {/* CONTENT */}
-        {loading ? (
-          <div className="flex flex-col items-center py-20">
-            <Loader className="animate-spin text-blue-400" size={48} />
-            <p className="mt-4 text-slate-400">Loading files…</p>
-          </div>
-        ) : sortedFiles.length === 0 ? (
-          <EmptyState />
+      <div className="mt-6 rounded-xl border border-border bg-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-foreground">Recent Files</h3>
+          <Link href="/files" className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1">
+            View all <ArrowRight size={12} />
+          </Link>
+        </div>
+        {files.length === 0 && !loading ? (
+          <EmptyState
+            icon={FileCheck2}
+            title="No files yet"
+            description="Upload your first file to see it appear here with its full security status."
+            actionLabel="Upload a file"
+            actionHref="/upload"
+          />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sortedFiles.map((file) => {
-              const ownerEmail = file.owner?.email;
-              const currentEmail = user?.email as string | undefined;
-              const isOwner = !!(ownerEmail && currentEmail && ownerEmail === currentEmail);
-
-              return (
-                <FileCard
-                  key={file._id}
-                  file={file}
-                  canManage={isOwner}
-                  onDelete={isOwner ? handleDelete : undefined}
-                  onPermanentDelete={isOwner ? handlePermanentDelete : undefined}
-                />
-              );
-            })}
-          </div>
+          <motion.div variants={staggerContainer} initial="hidden" animate="show" className="divide-y divide-border">
+            {files.slice(0, 5).map((f) => (
+              <motion.div key={f._id} variants={fadeInUp} className="flex items-center justify-between gap-3 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileText size={16} className="text-primary shrink-0" />
+                  <span className="text-sm text-foreground truncate">{f.filename}</span>
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {f.createdAt ? new Date(f.createdAt).toLocaleDateString() : ""}
+                </span>
+              </motion.div>
+            ))}
+          </motion.div>
         )}
       </div>
-    </div>
-  );
-}
-
-/* ---------- SMALL UI HELPERS ---------- */
-
-function Stat({
-  label,
-  value,
-  icon: Icon
-}: {
-  label: string;
-  value: number;
-  icon: any;
-}) {
-  return (
-    <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
-      <div className="flex justify-between mb-2">
-        <p className="text-slate-400 text-sm">{label}</p>
-        <Icon size={20} className="text-blue-400" />
-      </div>
-      <p className="text-3xl font-bold">{value}</p>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="text-center py-20 text-slate-400">
-      <p className="text-xl font-semibold">No files uploaded yet</p>
-      <a
-        href="/upload"
-        className="inline-block mt-4 px-6 py-3 bg-blue-500 rounded-lg text-white font-bold"
-      >
-        Upload your first file
-      </a>
     </div>
   );
 }

@@ -16,9 +16,11 @@ import {
   importSigningPublicKey,
   verifyEncryptedFileSignature,
 } from "@/lib/crypto/cryptoHelpers";
-import { AlertCircle, Lock, Download, Loader, ShieldCheck, ShieldAlert, ShieldQuestion, Clock, Ban, Bug } from "lucide-react";
+import { AlertCircle, Lock, Download, Loader, ShieldCheck, Clock, Ban, Bug } from "lucide-react";
 import toast from "react-hot-toast";
 import { getDeviceId } from "@/lib/security/fingerprint";
+import { apiErrorCode } from "@/lib/errors";
+import ProgressTimeline, { type TimelineStep, type TimelineStepState } from "@/components/design/ProgressTimeline";
 
 type FileMeta = {
   encryptionVersion: number;
@@ -37,28 +39,21 @@ type FileMeta = {
   keySalt?: string | null;
   keyIterations?: number | null;
   passwordKeyIvHint?: string | null;
-  // Phase 2: digital signature fields, all null on unsigned (legacy/Phase 1) v2 files.
   signature?: string | null;
   fileHash?: string | null;
   hashAlgorithm?: string | null;
   signatureAlgorithm?: string | null;
   signedAt?: string | null;
   ownerSigningPublicKey?: string | null;
-  // Phase 3: whether this file has any Zero Trust access policy configured (never exposes the
-  // actual rules to an anonymous requester - just whether extra checks will be evaluated).
   hasPolicy?: boolean;
-  // Phase 4: threat scan verdict. quarantined blocks download entirely (see downloadFile in
-  // file.controller.js) - shown here so the UI never even offers a download button for it.
   scanStatus?: string;
   riskLevel?: string | null;
   quarantined?: boolean;
 };
 
 type SignatureStatus = "idle" | "verifying" | "verified" | "unsigned" | "failed";
-
-/** Distinguishable load-time failure states, driven by the backend's error codes
- *  (not_found / revoked / expired) so the UI can show a specific, meaningful message. */
 type LoadErrorKind = "not_found" | "revoked" | "expired" | "network" | null;
+type DownloadStage = "idle" | "policy" | "signature" | "threat" | "decrypting" | "preparing" | "done" | "error";
 
 export default function FileDownloadPage() {
   const params = useParams();
@@ -73,6 +68,7 @@ export default function FileDownloadPage() {
   const [decrypting, setDecrypting] = useState(false);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [signatureStatus, setSignatureStatus] = useState<SignatureStatus>("idle");
+  const [downloadStage, setDownloadStage] = useState<DownloadStage>("idle");
 
   const fragmentKey = typeof window !== "undefined" ? window.location.hash : "";
   const hasFragmentKey = fragmentKey.startsWith("#k=");
@@ -83,8 +79,8 @@ export default function FileDownloadPage() {
       try {
         const res = await api.get(`/files/file/${fileId}/meta`);
         setMeta(res.data);
-      } catch (err: any) {
-        const code = err?.response?.data?.error;
+      } catch (err: unknown) {
+        const code = apiErrorCode(err);
         if (code === "revoked") setLoadError("revoked");
         else if (code === "expired") setLoadError("expired");
         else if (code === "not_found") setLoadError("not_found");
@@ -115,16 +111,12 @@ export default function FileDownloadPage() {
   };
 
   const fetchCiphertext = async (): Promise<ArrayBuffer> => {
-    // Zero Trust (Phase 3): the device fingerprint travels as a header (never a raw file field)
-    // so the backend's policy engine can evaluate allowedDevices/maxDevices rules. Authorization
-    // is attached too, if the recipient happens to be logged in, so requireApproval can identify
-    // them - the download route itself stays public and works fine without either.
+    setDownloadStage("policy");
     const headers: Record<string, string> = {};
     try {
       headers["x-device-id"] = await getDeviceId();
     } catch {
-      // fingerprinting failures never block a download - just means device-based policy
-      // checks (if any) will see no deviceId and evaluate accordingly.
+      // fingerprinting failures never block a download
     }
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -141,13 +133,10 @@ export default function FileDownloadPage() {
       if (body?.error === "quarantined") throw new Error(`QUARANTINED:${body.riskLevel || ""}`);
       throw new Error("NETWORK");
     }
+    setDownloadStage("threat");
     return res.arrayBuffer();
   };
 
-  /** Maps a caught error from the decrypt pipeline to a meaningful, user-facing message.
-   *  `context` distinguishes password-derived failures (which mean "wrong password") from
-   *  fragment/owner-key failures (which mean the ciphertext or key material was corrupted -
-   *  an integrity verification failure, since AES-GCM authentication is what's failing either way). */
   const describeDecryptError = (err: unknown, context: "password" | "key"): string => {
     const message = err instanceof Error ? err.message : "";
     if (message === "LIMIT_REACHED") return "This file's download limit has already been reached.";
@@ -155,24 +144,19 @@ export default function FileDownloadPage() {
     if (message === "EXPIRED") return "This file has expired.";
     if (message === "NETWORK") return "Network error while fetching the encrypted file. Please try again.";
     if (message.startsWith("POLICY_DENIED:")) {
-      return `🔒 Access denied by security policy: ${message.slice("POLICY_DENIED:".length)}`;
+      return `Access denied by security policy: ${message.slice("POLICY_DENIED:".length)}`;
     }
     if (message.startsWith("QUARANTINED:")) {
-      return `🐛 This file is quarantined (${message.slice("QUARANTINED:".length) || "flagged"} risk) and cannot be downloaded.`;
+      return `This file is quarantined (${message.slice("QUARANTINED:".length) || "flagged"} risk) and cannot be downloaded.`;
     }
     if (message === "TAMPERED") {
-      return "⚠ Signature verification failed - this file may have been tampered with. Download blocked for your safety.";
+      return "Signature verification failed - this file may have been tampered with. Download blocked for your safety.";
     }
-    return context === "password"
-      ? "Wrong password. Please try again."
-      : "Integrity verification failed - the file or key may be corrupted or tampered with.";
+    return context === "password" ? "Wrong password. Please try again." : "Integrity verification failed - the file or key may be corrupted or tampered with.";
   };
 
-  /** Phase 2: verifies the encrypted file's ECDSA signature (if present) against the uploader's
-   *  public signing key BEFORE decrypting - a forged/tampered ciphertext must never reach
-   *  decryptFile(). Files with no signature (legacy or pre-Phase-2 uploads) are treated as
-   *  "unsigned" and allowed through unblocked, preserving compatibility. */
   const verifySignature = async (ciphertext: ArrayBuffer): Promise<void> => {
+    setDownloadStage("signature");
     if (!meta?.signature || !meta?.ownerSigningPublicKey) {
       setSignatureStatus("unsigned");
       return;
@@ -192,15 +176,20 @@ export default function FileDownloadPage() {
     setDecrypting(true);
     setDecryptError("");
     setSignatureStatus("idle");
+    setDownloadStage("policy");
     try {
       const rawKey = base64UrlToBuf(fragmentKey.slice(3));
       const aesKey = await importAESKeyRaw(rawKey);
       const ciphertext = await fetchCiphertext();
-      await verifySignature(ciphertext); // throws before any decryption if tampered
+      await verifySignature(ciphertext);
+      setDownloadStage("decrypting");
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
+      setDownloadStage("preparing");
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
+      setDownloadStage("done");
     } catch (err) {
-      console.error("Decryption failed"); // never log key material or ciphertext, only that it failed
+      console.error("Decryption failed");
+      setDownloadStage("error");
       setDecryptError(describeDecryptError(err, "key"));
     } finally {
       setDecrypting(false);
@@ -216,20 +205,19 @@ export default function FileDownloadPage() {
     setDecrypting(true);
     setDecryptError("");
     setSignatureStatus("idle");
+    setDownloadStage("policy");
     try {
-      const aesKey = await unwrapAESKeyWithPassword(
-        meta.wrappedPasswordKey!,
-        passwordInput,
-        meta.keySalt!,
-        meta.passwordKeyIvHint!,
-        meta.keyIterations!
-      );
+      const aesKey = await unwrapAESKeyWithPassword(meta.wrappedPasswordKey!, passwordInput, meta.keySalt!, meta.passwordKeyIvHint!, meta.keyIterations!);
       const ciphertext = await fetchCiphertext();
       await verifySignature(ciphertext);
+      setDownloadStage("decrypting");
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
+      setDownloadStage("preparing");
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
+      setDownloadStage("done");
     } catch (err) {
       console.error("Decryption failed");
+      setDownloadStage("error");
       setDecryptError(describeDecryptError(err, "password"));
     } finally {
       setDecrypting(false);
@@ -245,14 +233,19 @@ export default function FileDownloadPage() {
     setDecrypting(true);
     setDecryptError("");
     setSignatureStatus("idle");
+    setDownloadStage("policy");
     try {
       const aesKey = await unwrapAESKey(meta.wrappedOwnerKey!, privateKey);
       const ciphertext = await fetchCiphertext();
       await verifySignature(ciphertext);
+      setDownloadStage("decrypting");
       const plaintext = await decryptFile(ciphertext, aesKey, base64ToBuf(meta.iv!));
+      setDownloadStage("preparing");
       triggerBlobDownload(plaintext, meta.originalFilename || meta.filename, meta.mimeType);
+      setDownloadStage("done");
     } catch (err) {
       console.error("Decryption failed");
+      setDownloadStage("error");
       setDecryptError(describeDecryptError(err, "key"));
       toast.error("Decryption failed");
     } finally {
@@ -263,13 +256,16 @@ export default function FileDownloadPage() {
   const handleLegacyDownload = async () => {
     setDecrypting(true);
     setDecryptError("");
+    setDownloadStage("policy");
     try {
       await downloadFileWithIpTracking(fileId, undefined, meta?.hasPassword ? passwordInput : undefined);
+      setDownloadStage("done");
     } catch (err) {
       console.error("Download failed:", err);
+      setDownloadStage("error");
       const message = err instanceof Error ? err.message : "";
       if (message.startsWith("Access denied by security policy")) {
-        setDecryptError(`🔒 ${message}`);
+        setDecryptError(message);
       } else {
         setDecryptError(meta?.hasPassword ? "Wrong password or download failed." : "Download failed.");
       }
@@ -280,69 +276,102 @@ export default function FileDownloadPage() {
 
   const loggedIn = typeof window !== "undefined" && !!localStorage.getItem("token");
 
+  const stepState = (_key: DownloadStage, order: number, currentOrder: number, hasError: boolean): TimelineStepState => {
+    if (hasError && currentOrder === order) return "error";
+    if (currentOrder > order || downloadStage === "done") return "done";
+    if (currentOrder === order) return "active";
+    return "pending";
+  };
+
+  const stageOrder: Record<DownloadStage, number> = {
+    idle: -1,
+    policy: 0,
+    signature: 1,
+    threat: 2,
+    decrypting: 3,
+    preparing: 4,
+    done: 5,
+    error: -1,
+  };
+
+  const timelineSteps: TimelineStep[] =
+    downloadStage !== "idle"
+      ? [
+          { key: "policy", label: "Checking Policies", state: stepState("policy", 0, stageOrder[downloadStage], downloadStage === "error" && stageOrder.policy === 0) },
+          {
+            key: "signature",
+            label: "Verifying Signature",
+            state: stepState("signature", 1, stageOrder[downloadStage], false),
+            detail: signatureStatus === "verified" ? "Verified" : signatureStatus === "unsigned" ? "Unsigned file" : signatureStatus === "failed" ? "Tampering detected" : undefined,
+          },
+          { key: "threat", label: "Threat Check", state: stepState("threat", 2, stageOrder[downloadStage], false) },
+          { key: "decrypt", label: "Decrypting", state: stepState("decrypting", 3, stageOrder[downloadStage], false) },
+          { key: "prepare", label: "Preparing Download", state: stepState("preparing", 4, stageOrder[downloadStage], false) },
+          { key: "done", label: "Downloaded", state: downloadStage === "done" ? "done" : downloadStage === "error" ? "pending" : "pending" },
+        ]
+      : [];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-lg">
-        <div className="bg-slate-800 bg-opacity-80 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          <div className="relative h-28 bg-gradient-to-r from-blue-600 to-cyan-600 flex items-center justify-center">
-            <div className="bg-white bg-opacity-20 p-3 rounded-full backdrop-blur-md">
-              <ShieldCheck size={28} className="text-white" />
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 py-8">
+      <div className="w-full max-w-2xl grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className="md:col-span-3 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden h-fit">
+          <div className="relative h-24 bg-linear-to-r from-primary to-cyan-500 flex items-center justify-center">
+            <div className="bg-white/20 p-3 rounded-full backdrop-blur-md">
+              <ShieldCheck size={26} className="text-white" />
             </div>
           </div>
 
           <div className="p-8">
             {loading || checkingKey ? (
               <div className="flex flex-col items-center gap-3 py-8">
-                <Loader size={28} className="text-blue-400 animate-spin" />
-                <p className="text-slate-400 text-sm">Loading file details...</p>
+                <Loader size={28} className="text-primary animate-spin" />
+                <p className="text-muted-foreground text-sm">Loading file details...</p>
               </div>
             ) : loadError ? (
-              <div className="p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg flex items-start gap-3">
+              <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3">
                 {loadError === "expired" ? (
-                  <Clock size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <Clock size={20} className="text-destructive shrink-0 mt-0.5" />
                 ) : loadError === "revoked" ? (
-                  <Ban size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <Ban size={20} className="text-destructive shrink-0 mt-0.5" />
                 ) : (
-                  <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <AlertCircle size={20} className="text-destructive shrink-0 mt-0.5" />
                 )}
-                <p className="text-red-200 text-sm">{loadErrorMessage[loadError]}</p>
+                <p className="text-destructive text-sm">{loadErrorMessage[loadError]}</p>
               </div>
             ) : meta ? (
               <>
-                <h1 className="text-2xl font-bold text-white mb-1 text-center break-all">
-                  {meta.originalFilename || meta.filename}
-                </h1>
-                <p className={`text-slate-400 text-sm text-center ${meta.hasPolicy ? "mb-2" : "mb-6"}`}>
+                <h1 className="text-2xl font-bold text-foreground mb-1 text-center break-all">{meta.originalFilename || meta.filename}</h1>
+                <p className={`text-muted-foreground text-sm text-center ${meta.hasPolicy ? "mb-2" : "mb-6"}`}>
                   {meta.encryptionVersion === 2
                     ? "This file is end-to-end encrypted. Decryption happens locally in your browser."
                     : "Secure file download"}
                 </p>
                 {meta.hasPolicy && (
-                  <p className="text-slate-500 text-xs text-center mb-6 flex items-center justify-center gap-1">
+                  <p className="text-muted-foreground/80 text-xs text-center mb-6 flex items-center justify-center gap-1">
                     <Lock size={12} />
                     This file has additional access restrictions set by its owner.
                   </p>
                 )}
 
                 {meta.quarantined ? (
-                  <div className="p-4 bg-red-600 bg-opacity-30 border border-red-500 rounded-lg flex items-start gap-3">
-                    <Bug size={20} className="text-red-300 flex-shrink-0 mt-0.5" />
+                  <div className="p-4 bg-destructive/15 border border-destructive/40 rounded-lg flex items-start gap-3">
+                    <Bug size={20} className="text-destructive shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-red-100 text-sm font-semibold">This file is quarantined</p>
-                      <p className="text-red-200 text-xs mt-1">
-                        SecureShare's threat scanner flagged this upload as {meta.riskLevel || "high"} risk. Download has
-                        been disabled to protect you. Contact the file's owner if you believe this is a mistake.
+                      <p className="text-destructive text-sm font-semibold">This file is quarantined</p>
+                      <p className="text-destructive/80 text-xs mt-1">
+                        SecureShare&apos;s threat scanner flagged this upload as {meta.riskLevel || "high"} risk. Download has
+                        been disabled to protect you. Contact the file&apos;s owner if you believe this is a mistake.
                       </p>
                     </div>
                   </div>
                 ) : meta.limitReached ? (
-                  <div className="p-4 bg-orange-500 bg-opacity-20 border border-orange-500 border-opacity-50 rounded-lg text-center">
-                    <p className="text-orange-200 text-sm font-semibold">Download limit reached</p>
+                  <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg text-center">
+                    <p className="text-warning text-sm font-semibold">Download limit reached</p>
                   </div>
                 ) : decryptError ? (
-                  <div className="mb-4 p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg flex items-start gap-3">
-                    <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-red-200 text-sm">{decryptError}</p>
+                  <div className="mb-4 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3">
+                    <AlertCircle size={20} className="text-destructive shrink-0 mt-0.5" />
+                    <p className="text-destructive text-sm">{decryptError}</p>
                   </div>
                 ) : null}
 
@@ -350,20 +379,21 @@ export default function FileDownloadPage() {
                   <div className="space-y-4">
                     {meta.hasPassword && (
                       <div className="relative">
-                        <Lock size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                        <Lock size={16} className="absolute left-3 top-3.5 text-muted-foreground" />
                         <input
                           type="password"
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
                           placeholder="Enter the download password"
-                          className="w-full pl-10 pr-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                          className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
                         />
                       </div>
                     )}
                     <button
+                      type="button"
                       onClick={handleLegacyDownload}
                       disabled={decrypting}
-                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full py-3 bg-primary text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {decrypting ? <Loader size={20} className="animate-spin" /> : <Download size={20} />}
                       {decrypting ? "Downloading..." : "Download File"}
@@ -373,40 +403,12 @@ export default function FileDownloadPage() {
 
                 {!meta.quarantined && !meta.limitReached && meta.encryptionVersion === 2 && (
                   <div className="space-y-4">
-                    {decrypting && (
-                      <p className="text-center text-blue-300 text-sm">
-                        {signatureStatus === "verifying"
-                          ? "Verifying digital signature..."
-                          : "Decrypting file locally in your browser..."}
-                      </p>
-                    )}
-
-                    {!decrypting && signatureStatus === "verified" && (
-                      <div className="flex items-center justify-center gap-2 text-green-300 text-xs">
-                        <ShieldCheck size={14} />
-                        <span>Signature verified - this file is authentic and unmodified.</span>
-                      </div>
-                    )}
-                    {!decrypting && signatureStatus === "unsigned" && (
-                      <div className="flex items-center justify-center gap-2 text-yellow-300 text-xs">
-                        <ShieldQuestion size={14} />
-                        <span>This file is unsigned (uploaded before signing was available) - integrity was not cryptographically verified.</span>
-                      </div>
-                    )}
-                    {signatureStatus === "failed" && (
-                      <div className="p-3 bg-red-600 bg-opacity-30 border border-red-500 rounded-lg flex items-start gap-2">
-                        <ShieldAlert size={18} className="text-red-300 flex-shrink-0 mt-0.5" />
-                        <p className="text-red-100 text-xs font-semibold">
-                          Tampering detected. This file's signature does not match its content - download blocked.
-                        </p>
-                      </div>
-                    )}
-
                     {hasFragmentKey && (
                       <button
+                        type="button"
                         onClick={handleDecryptWithFragment}
                         disabled={decrypting}
-                        className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="w-full py-3 bg-primary text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
                       >
                         {decrypting ? <Loader size={20} className="animate-spin" /> : <Download size={20} />}
                         {decrypting ? "Decrypting..." : "Decrypt & Download"}
@@ -416,20 +418,21 @@ export default function FileDownloadPage() {
                     {!hasFragmentKey && meta.hasPassword && (
                       <>
                         <div className="relative">
-                          <Lock size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                          <Lock size={16} className="absolute left-3 top-3.5 text-muted-foreground" />
                           <input
                             type="password"
                             value={passwordInput}
                             onChange={(e) => setPasswordInput(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && handleDecryptWithPassword()}
                             placeholder="Enter the share password"
-                            className="w-full pl-10 pr-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                            className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
                           />
                         </div>
                         <button
+                          type="button"
                           onClick={handleDecryptWithPassword}
                           disabled={decrypting}
-                          className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                          className="w-full py-3 bg-primary text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           {decrypting ? <Loader size={20} className="animate-spin" /> : <Download size={20} />}
                           {decrypting ? "Decrypting..." : "Decrypt & Download"}
@@ -439,9 +442,10 @@ export default function FileDownloadPage() {
 
                     {!hasFragmentKey && !meta.hasPassword && loggedIn && (
                       <button
+                        type="button"
                         onClick={handleDecryptAsOwner}
                         disabled={decrypting}
-                        className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="w-full py-3 bg-primary text-white font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
                       >
                         {decrypting ? <Loader size={20} className="animate-spin" /> : <Download size={20} />}
                         {decrypting ? "Decrypting..." : "Decrypt & Download (as owner)"}
@@ -449,8 +453,8 @@ export default function FileDownloadPage() {
                     )}
 
                     {!hasFragmentKey && !meta.hasPassword && !loggedIn && (
-                      <div className="p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg text-center">
-                        <p className="text-red-200 text-sm">
+                      <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-center">
+                        <p className="text-destructive text-sm">
                           This link is missing its decryption key. Please request a new link from the sender.
                         </p>
                       </div>
@@ -461,6 +465,17 @@ export default function FileDownloadPage() {
             ) : null}
           </div>
         </div>
+
+        {meta && !loadError && (
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 h-fit">
+            <h3 className="text-sm font-semibold text-foreground mb-5">Download Verification</h3>
+            {timelineSteps.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Start the download to see live verification progress here.</p>
+            ) : (
+              <ProgressTimeline steps={timelineSteps} />
+            )}
+          </div>
+        )}
       </div>
 
       <UnlockKeyModal

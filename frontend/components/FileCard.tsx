@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   Copy,
@@ -13,11 +14,38 @@ import {
   Eye,
   EyeOff,
   List,
-  X
+  X,
+  FileText,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { downloadFileWithIpTracking } from "@/lib/ipTracking";
+import StatusBadge, { decisionTone, riskTone } from "@/components/design/StatusBadge";
+import { fadeInUp } from "@/lib/motion";
+import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
+
+type FileDoc = {
+  expiresAt: string | number | Date;
+  oneTime: boolean;
+  maxDownloads?: number;
+  downloadCount: number;
+  _id: string;
+  filename: string;
+  passwordHash?: string;
+  wrappedPasswordKey?: string;
+  encryptionVersion?: number;
+  revoked?: boolean;
+  owner?: { email?: string; name?: string };
+  mimeType?: string | null;
+  createdAt?: string;
+  signature?: string | null;
+  riskLevel?: "Low" | "Medium" | "High" | "Critical" | null;
+  quarantined?: boolean;
+  scanStatus?: string;
+  dlpRisk?: "None" | "Low" | "Medium" | "High" | "Critical" | null;
+  dlpDecision?: "allow" | "warn" | "require_approval" | "block" | null;
+  policy?: FilePolicy;
+};
 
 export default function FileCard({
   file,
@@ -25,19 +53,7 @@ export default function FileCard({
   onPermanentDelete,
   canManage,
 }: {
-  file: {
-    expiresAt: string | number | Date;
-    oneTime: boolean;
-    maxDownloads?: number;
-    downloadCount: number;
-    _id: string;
-    filename: string;
-    passwordHash?: string;
-    wrappedPasswordKey?: string;
-    encryptionVersion?: number;
-    revoked?: boolean;
-    owner?: { email?: string; name?: string };
-  };
+  file: FileDoc;
   onDelete?: (fileId: string) => void;
   onPermanentDelete?: (fileId: string) => void;
   canManage?: boolean;
@@ -61,60 +77,33 @@ export default function FileCard({
 
   const timeUntilExpiry = expiresDate.getTime() - now.getTime();
   const daysLeft = Math.floor(timeUntilExpiry / (1000 * 60 * 60 * 24));
-  const hoursLeft = Math.floor(
-    (timeUntilExpiry % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-  );
+  const hoursLeft = Math.floor((timeUntilExpiry % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
   const isE2E = file.encryptionVersion === 2;
 
-  // v2 files are decrypted client-side on the dedicated /file/:id page - the dashboard has no
-  // way to reconstruct the original share link's fragment key (it was only ever shown once,
-  // right after upload), so "link" here always means "go to the decrypt page as the owner."
-  const e2eLink =
-    typeof window !== "undefined" ? `${window.location.origin}/file/${file._id}` : `/file/${file._id}`;
+  const e2eLink = typeof window !== "undefined" ? `${window.location.origin}/file/${file._id}` : `/file/${file._id}`;
 
-  const baseLink = `${
-    process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"
-  }/files/download/${file._id}`;
+  const baseLink = `${process.env.NEXT_PUBLIC_API || "http://localhost:5000/api"}/files/download/${file._id}`;
 
   const getTrackedLink = (password?: string) => {
     try {
       const url = new URL(baseLink);
-
-      // Attach current user's email if available
       if (typeof window !== "undefined") {
         const rawUser = localStorage.getItem("user");
         if (rawUser) {
           const parsed = JSON.parse(rawUser);
-          if (parsed?.email) {
-            url.searchParams.set("email", parsed.email as string);
-            console.log("Tracking link generated with email:", parsed.email);
-          } else {
-            console.warn("User object found but no email property");
-          }
-        } else {
-          console.warn("No user object in localStorage");
+          if (parsed?.email) url.searchParams.set("email", parsed.email as string);
         }
       }
-
-      if (password && password.trim()) {
-        url.searchParams.set("password", password.trim());
-      }
-
-      const finalLink = url.toString();
-      console.log("Final tracked link:", finalLink);
-      return finalLink;
-    } catch (err) {
-      console.error("Error generating tracked link:", err);
-      // Fallback: just return baseLink if URL construction fails
+      if (password && password.trim()) url.searchParams.set("password", password.trim());
+      return url.toString();
+    } catch {
       return baseLink;
     }
   };
 
   const handleDirectDownload = async () => {
     if (isE2E) {
-      // v2 files are decrypted client-side; the owner's private key + owner-wrapped AES key
-      // live in the decrypt page, not here, so route there instead of fetching bytes directly.
       router.push(`/file/${file._id}`);
       return;
     }
@@ -153,51 +142,18 @@ export default function FileCard({
   };
 
   const getExpiryStatus = () => {
-    if (revoked)
-      return {
-        label: "Revoked",
-        color: "bg-red-600",
-        textColor: "text-red-400",
-        icon: AlertCircle
-      };
-    if (expired)
-      return {
-        label: "Expired",
-        color: "bg-red-500",
-        textColor: "text-red-400",
-        icon: AlertCircle
-      };
-    if (used)
-      return {
-        label: "Limit Reached",
-        color: "bg-orange-500",
-        textColor: "text-orange-400",
-        icon: AlertCircle
-      };
-    if (daysLeft === 0 && hoursLeft < 24)
-      return {
-        label: "Expiring Soon",
-        color: "bg-yellow-500",
-        textColor: "text-yellow-400",
-        icon: Clock
-      };
-    return {
-      label: "Active",
-      color: "bg-green-500",
-      textColor: "text-green-400",
-      icon: Check
-    };
+    if (revoked) return { label: "Revoked", tone: "danger" as const };
+    if (expired) return { label: "Expired", tone: "danger" as const };
+    if (used) return { label: "Limit Reached", tone: "warning" as const };
+    if (daysLeft === 0 && hoursLeft < 24) return { label: "Expiring Soon", tone: "warning" as const };
+    return { label: "Active", tone: "success" as const };
   };
 
   const status = getExpiryStatus();
-  const StatusIcon = status.icon;
 
   const handleCopyLink = async () => {
     try {
       if (isE2E) {
-        // The original share link (with its fragment/password-protected key) was only ever
-        // shown once at upload time - this copies the account-access page instead, which the
-        // owner can use to decrypt while logged in.
         await navigator.clipboard.writeText(e2eLink);
         toast.success("File page link copied (decrypts using your account key)");
         setCopied(true);
@@ -251,9 +207,7 @@ export default function FileCard({
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      await api.delete(`/files/file/${file._id}/permanent`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await api.delete(`/files/file/${file._id}/permanent`, { headers: { Authorization: `Bearer ${token}` } });
       toast.success("File deleted permanently");
       if (onPermanentDelete) onPermanentDelete(file._id);
     } catch {
@@ -264,9 +218,7 @@ export default function FileCard({
     }
   };
 
-  const handleViewLogs = () => {
-    router.push(`/file/${file._id}/logs`);
-  };
+  const handleViewLogs = () => router.push(`/file/${file._id}/logs`);
 
   const getTimeRemaining = () => {
     if (expired) return "Expired";
@@ -275,48 +227,59 @@ export default function FileCard({
     return `${hoursLeft}h left`;
   };
 
+  const zeroTrustPolicyActive = hasZeroTrustPolicy(file.policy);
+
   return (
-    <div className="group bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-blue-500 transition-all hover:shadow-lg hover:shadow-blue-500/20">
+    <motion.div
+      variants={fadeInUp}
+      className="group bg-card border border-border rounded-xl p-6 hover:border-primary/40 transition-all hover:shadow-lg hover:shadow-primary/10"
+    >
       {showPwdModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-sm p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-card border border-border rounded-xl w-full max-w-sm p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-white font-bold">Include Password</h2>
+              <h2 className="text-foreground font-bold">Include Password</h2>
               <button
-                onClick={() => { setShowPwdModal(false); setPwdInput(""); }}
-                className="text-slate-400 hover:text-slate-200"
+                onClick={() => {
+                  setShowPwdModal(false);
+                  setPwdInput("");
+                }}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Close"
               >
                 <X size={18} />
               </button>
             </div>
-            <p className="text-slate-400 text-sm mb-3">Add the file password to the copied link so recipients can download directly.</p>
+            <p className="text-muted-foreground text-sm mb-3">
+              Add the file password to the copied link so recipients can download directly.
+            </p>
             <div className="relative mb-4">
-              <Lock size={16} className="absolute left-3 top-3.5 text-slate-400" />
+              <Lock size={16} className="absolute left-3 top-3.5 text-muted-foreground" />
               <input
                 type="text"
                 value={pwdInput}
                 onChange={(e) => setPwdInput(e.target.value)}
                 placeholder="Enter password (optional)"
-                className="w-full pl-10 pr-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
               />
             </div>
             <div className="flex gap-2">
-              <button
-                onClick={confirmCopyWithPassword}
-                className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg"
-              >
+              <button onClick={confirmCopyWithPassword} className="flex-1 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold">
                 Copy Link
               </button>
               <button
                 onClick={handleDirectDownloadWithPassword}
                 disabled={loading}
-                className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg disabled:opacity-50"
+                className="flex-1 px-4 py-2 bg-success hover:bg-success/90 text-white rounded-lg disabled:opacity-50 text-sm font-semibold"
               >
                 Download
               </button>
               <button
-                onClick={() => { setShowPwdModal(false); setPwdInput(""); }}
-                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg"
+                onClick={() => {
+                  setShowPwdModal(false);
+                  setPwdInput("");
+                }}
+                className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg text-sm font-semibold"
               >
                 Cancel
               </button>
@@ -324,61 +287,70 @@ export default function FileCard({
           </div>
         </div>
       )}
-      {/* Header */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2">
-            <Lock size={18} className="text-blue-400 flex-shrink-0" />
-            <h3 className="font-bold text-lg text-white truncate">
-              {file.filename}
-            </h3>
-          </div>
-        </div>
 
-        {/* Status */}
-        <div
-          className={`flex items-center gap-1 px-3 py-1 rounded-full ${status.color} bg-opacity-20 border ${status.color} border-opacity-30`}
-        >
-          <StatusIcon size={14} className={status.textColor} />
-          <span className={`text-xs font-semibold ${status.textColor}`}>
-            {status.label}
-          </span>
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <FileText size={18} className="text-primary shrink-0" />
+            <h3 className="font-bold text-base text-foreground truncate">{file.filename}</h3>
+          </div>
+          <p className="text-xs text-muted-foreground truncate">
+            {file.mimeType || "Unknown type"}
+            {file.createdAt && ` · Uploaded ${new Date(file.createdAt).toLocaleDateString()}`}
+          </p>
         </div>
+        <StatusBadge label={status.label} tone={status.tone} />
+      </div>
+
+      {/* Security badges - only rendered when backed by real per-file data */}
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        <StatusBadge label={isE2E ? "Encrypted" : "Legacy Encryption"} tone={isE2E ? "success" : "neutral"} />
+        {file.signature ? (
+          <StatusBadge label="Signed" tone="success" />
+        ) : (
+          <StatusBadge label="Unsigned" tone="neutral" />
+        )}
+        {file.quarantined ? (
+          <StatusBadge label="Quarantined" tone="danger" />
+        ) : file.riskLevel ? (
+          <StatusBadge label={file.riskLevel === "Low" ? "Threat Clean" : `Threat: ${file.riskLevel}`} tone={riskTone[file.riskLevel] ?? "neutral"} />
+        ) : null}
+        {file.dlpDecision && file.dlpDecision !== "allow" ? (
+          <StatusBadge label={`DLP: ${file.dlpRisk || "flagged"}`} tone={decisionTone[file.dlpDecision] ?? "warning"} />
+        ) : file.dlpDecision === "allow" ? (
+          <StatusBadge label="DLP Safe" tone="success" />
+        ) : null}
+        {zeroTrustPolicyActive && <StatusBadge label="Zero Trust" tone="info" />}
       </div>
 
       {/* Info */}
       <div className="space-y-2 mb-4 text-sm">
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Clock size={16} />
           <span>
-            Expires:{" "}
-            <span className="text-slate-300 font-medium">
-              {expiresDate.toLocaleDateString()}
-            </span>
+            Expires: <span className="text-foreground font-medium">{expiresDate.toLocaleDateString()}</span>
           </span>
         </div>
 
         {!expired && !used && (
-          <div className="flex items-center gap-2 text-blue-400 font-semibold">
+          <div className="flex items-center gap-2 text-primary font-semibold">
             <Clock size={16} />
             <span>{getTimeRemaining()}</span>
           </div>
         )}
 
         {file.oneTime && (
-          <div className="flex items-center gap-2 text-yellow-400">
+          <div className="flex items-center gap-2 text-warning">
             <AlertCircle size={16} />
             <span>One-time download</span>
           </div>
         )}
 
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Share2 size={16} />
           <span>
-            Downloads:{" "}
-            <span className="text-slate-300 font-medium">
-              {file.downloadCount}
-            </span>
+            Downloads: <span className="text-foreground font-medium">{file.downloadCount}</span>
           </span>
         </div>
       </div>
@@ -389,7 +361,7 @@ export default function FileCard({
           <>
             <button
               onClick={handleCopyLink}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-lg"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white font-semibold rounded-lg text-sm transition-colors"
             >
               {copied ? <Check size={18} /> : <Copy size={18} />}
               {copied ? "Copied!" : "Copy Link"}
@@ -398,33 +370,33 @@ export default function FileCard({
             <button
               onClick={handleDirectDownload}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-lg disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-success hover:bg-success/90 text-white font-semibold rounded-lg disabled:opacity-50 text-sm transition-colors"
             >
-              {loading ? <span>Downloading...</span> : <>📥 Direct Download</>}
+              {loading ? "Downloading..." : "Direct Download"}
             </button>
 
             <button
               onClick={() => setShowLink(!showLink)}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-lg"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-muted hover:bg-muted/70 text-foreground font-semibold rounded-lg text-sm transition-colors"
             >
               {showLink ? <EyeOff size={18} /> : <Eye size={18} />}
               {showLink ? "Hide Link" : "Show Link"}
             </button>
 
             {showLink && (
-              <div className="bg-slate-700 rounded-lg p-3 border border-slate-600">
+              <div className="bg-muted/50 rounded-lg p-3 border border-border">
                 <div className="space-y-2">
-                  <code className="text-xs text-slate-300 break-all">
-                    {isE2E ? e2eLink : getTrackedLink()}
-                  </code>
+                  <code className="text-xs text-muted-foreground break-all">{isE2E ? e2eLink : getTrackedLink()}</code>
                   {isE2E ? (
-                    <p className="text-slate-400 text-xs">
-                      This is your account-access page. The original share link containing the decryption key was only shown once, right after upload - if you lost it, you can still decrypt here while logged in.
+                    <p className="text-muted-foreground text-xs">
+                      This is your account-access page. The original share link containing the decryption key was
+                      only shown once, right after upload - if you lost it, you can still decrypt here while logged in.
                     </p>
                   ) : (
                     file.passwordHash && (
-                      <p className="text-slate-400 text-xs">
-                        This file is password protected. Append <span className="text-slate-200">?password=YOUR_PASSWORD</span> to the link when sharing.
+                      <p className="text-muted-foreground text-xs">
+                        This file is password protected. Append{" "}
+                        <span className="text-foreground">?password=YOUR_PASSWORD</span> to the link when sharing.
                       </p>
                     )
                   )}
@@ -435,48 +407,39 @@ export default function FileCard({
         )}
 
         {(expired || used || revoked) && (
-          <div className="p-3 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-30 rounded-lg text-center">
-            <p className="text-red-300 text-sm font-semibold">
+          <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-center">
+            <p className="text-destructive text-sm font-semibold">
               {revoked ? "This link was revoked" : expired ? "This link has expired" : "This link was used"}
             </p>
           </div>
         )}
 
-        {/* Logs - only uploader can view */}
         {canManage && (
           <button
             onClick={handleViewLogs}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-lg"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-muted hover:bg-muted/70 text-foreground font-semibold rounded-lg text-sm transition-colors"
           >
             <List size={18} />
             View Logs
           </button>
         )}
 
-        {/* Delete */}
         {canManage && onDelete && !(expired || used || revoked) && (
-          <div className="pt-2 border-t border-slate-700">
+          <div className="pt-2 border-t border-border">
             {!showDeleteConfirm ? (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500 bg-opacity-20 hover:bg-opacity-30 text-red-400 font-semibold rounded-lg"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-destructive/10 hover:bg-destructive/20 text-destructive font-semibold rounded-lg text-sm transition-colors"
               >
                 <Trash2 size={18} />
                 Revoke File
               </button>
             ) : (
               <div className="flex gap-2">
-                <button
-                  onClick={handleDelete}
-                  disabled={loading}
-                  className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg"
-                >
+                <button onClick={handleDelete} disabled={loading} className="flex-1 px-3 py-2 bg-destructive text-white rounded-lg text-sm font-semibold">
                   Revoke
                 </button>
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 px-3 py-2 bg-slate-700 text-white rounded-lg"
-                >
+                <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 px-3 py-2 bg-muted text-foreground rounded-lg text-sm font-semibold">
                   Cancel
                 </button>
               </div>
@@ -484,33 +447,28 @@ export default function FileCard({
           </div>
         )}
 
-        {/* Permanent Delete - Available for all files */}
         {canManage && onPermanentDelete && (
-          <div className={`${!(expired || used || revoked) ? '' : 'pt-2 border-t border-slate-700'}`}>
+          <div className={!(expired || used || revoked) ? "" : "pt-2 border-t border-border"}>
             {!showPermanentDeleteConfirm ? (
               <button
                 onClick={() => setShowPermanentDeleteConfirm(true)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-rose-900 bg-opacity-30 hover:bg-opacity-50 text-rose-300 font-semibold rounded-lg border border-rose-700"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-destructive/5 hover:bg-destructive/15 text-destructive/90 font-semibold rounded-lg border border-destructive/30 text-sm transition-colors"
               >
                 <Trash2 size={18} />
                 Delete Permanently
               </button>
             ) : (
               <div className="space-y-2">
-                <p className="text-rose-300 text-xs text-center font-semibold">This cannot be undone!</p>
+                <p className="text-destructive text-xs text-center font-semibold">This cannot be undone!</p>
                 <div className="flex gap-2">
                   <button
                     onClick={handlePermanentDelete}
                     disabled={loading}
-                    className="flex-1 px-3 py-2 bg-rose-600 text-white rounded-lg font-semibold disabled:opacity-50"
+                    className="flex-1 px-3 py-2 bg-destructive text-white rounded-lg font-semibold disabled:opacity-50 text-sm"
                   >
                     {loading ? "Deleting..." : "Delete Forever"}
                   </button>
-                  <button
-                    onClick={() => setShowPermanentDeleteConfirm(false)}
-                    disabled={loading}
-                    className="flex-1 px-3 py-2 bg-slate-700 text-white rounded-lg"
-                  >
+                  <button onClick={() => setShowPermanentDeleteConfirm(false)} disabled={loading} className="flex-1 px-3 py-2 bg-muted text-foreground rounded-lg text-sm font-semibold">
                     Cancel
                   </button>
                 </div>
@@ -519,6 +477,6 @@ export default function FileCard({
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

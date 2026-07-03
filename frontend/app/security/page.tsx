@@ -3,20 +3,18 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import {
-  ShieldCheck,
-  Laptop,
-  Trash2,
-  Monitor,
-  Clock,
-  AlertCircle,
-  Ban,
-  UserPlus,
-  KeyRound,
-  LogOut,
-  Loader,
-} from "lucide-react";
+import { apiErrorStatus } from "@/lib/errors";
+import { ShieldCheck, Laptop, Trash2, Monitor, Clock, AlertCircle, Ban, UserPlus, KeyRound, LogOut } from "lucide-react";
 import toast from "react-hot-toast";
+import { motion } from "framer-motion";
+import PageHeader from "@/components/design/PageHeader";
+import EmptyState from "@/components/design/EmptyState";
+import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
+import SecurityScoreGauge from "@/components/design/SecurityScoreGauge";
+import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import { computeSecurityScore } from "@/lib/securityScore";
+import { fadeInUp, staggerContainer } from "@/lib/motion";
+import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
 
 type DeviceEntry = {
   deviceId: string;
@@ -53,6 +51,10 @@ type SecurityEventEntry = {
   createdAt: string;
 };
 
+type FileMeta = { signature?: string | null; policy?: FilePolicy };
+type ThreatStats = { totalScans: number; quarantinedFiles: number; malwareDetections: number };
+type DLPStats = { totalScans: number; policyViolations: number };
+
 const eventIcon = (type: SecurityEventEntry["type"]) => {
   switch (type) {
     case "new_device":
@@ -73,6 +75,9 @@ export default function SecurityCenterPage() {
   const [devices, setDevices] = useState<DeviceEntry[]>([]);
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [events, setEvents] = useState<SecurityEventEntry[]>([]);
+  const [files, setFiles] = useState<FileMeta[]>([]);
+  const [threatStats, setThreatStats] = useState<ThreatStats | null>(null);
+  const [dlpStats, setDlpStats] = useState<DLPStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -80,16 +85,23 @@ export default function SecurityCenterPage() {
   const fetchAll = useCallback(async (token: string) => {
     try {
       setLoading(true);
-      const [devicesRes, sessionsRes, eventsRes] = await Promise.all([
+      const [devicesRes, sessionsRes, eventsRes, filesRes, threatRes, dlpRes] = await Promise.all([
         api.get<DeviceEntry[]>("/devices", { headers: { Authorization: `Bearer ${token}` } }),
         api.get<SessionEntry[]>("/sessions", { headers: { Authorization: `Bearer ${token}` } }),
         api.get<SecurityEventEntry[]>("/security/events", { headers: { Authorization: `Bearer ${token}` } }),
+        api.get<FileMeta[]>("/files/my-files", { headers: { Authorization: `Bearer ${token}` } }),
+        api.get<ThreatStats>("/threats/stats", { headers: { Authorization: `Bearer ${token}` } }),
+        api.get<DLPStats>("/dlp/stats", { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setDevices(devicesRes.data || []);
       setSessions(sessionsRes.data || []);
       setEvents(eventsRes.data || []);
-    } catch (err: any) {
-      if (err?.response?.status === 401 || err?.response?.status === 403) {
+      setFiles(filesRes.data || []);
+      setThreatStats(threatRes.data || null);
+      setDlpStats(dlpRes.data || null);
+    } catch (err: unknown) {
+      const status = apiErrorStatus(err);
+      if (status === 401 || status === 403) {
         router.push("/login");
         return;
       }
@@ -142,201 +154,195 @@ export default function SecurityCenterPage() {
 
   const blockedAttempts = events.filter((e) => e.type === "download_denied");
   const activityEvents = events.filter((e) => e.type !== "download_denied");
+  const trustedDevices = devices.filter((d) => d.trusted).length;
+
+  const securityScore = computeSecurityScore({
+    totalDevices: devices.length,
+    trustedDevices,
+    totalScans: threatStats?.totalScans ?? 0,
+    malwareDetections: threatStats?.malwareDetections ?? 0,
+    quarantinedFiles: threatStats?.quarantinedFiles ?? 0,
+    dlpTotalScans: dlpStats?.totalScans ?? 0,
+    dlpViolations: dlpStats?.policyViolations ?? 0,
+    totalFiles: files.length,
+    signedFiles: files.filter((f) => f.signature).length,
+    policiesConfigured: files.filter((f) => hasZeroTrustPolicy(f.policy)).length,
+  });
 
   const formatDate = (d: string) => new Date(d).toLocaleString();
 
+  const sessionColumns: DataTableColumn<SessionEntry>[] = [
+    {
+      key: "browser",
+      header: "Browser / OS",
+      render: (s) => (
+        <>
+          {s.browser || "Unknown"} / {s.operatingSystem || "Unknown"}
+          {s.isCurrent && <span className="ml-2"><StatusBadgeInline label="Current" /></span>}
+        </>
+      ),
+    },
+    { key: "ip", header: "IP / Country", render: (s) => <span className="font-mono text-xs">{s.ip || "unknown"} {s.country && s.country !== "Unknown" ? `(${s.country})` : ""}</span> },
+    { key: "created", header: "Signed in", render: (s) => formatDate(s.createdAt) },
+    { key: "active", header: "Last active", render: (s) => formatDate(s.lastActiveAt) },
+    {
+      key: "action",
+      header: "Action",
+      align: "right",
+      render: (s) => (
+        <button
+          type="button"
+          onClick={() => handleRevokeSession(s.sessionId)}
+          disabled={busyId === s.sessionId}
+          className="px-3 py-1.5 text-xs font-semibold text-destructive hover:text-destructive/80 hover:bg-destructive/10 rounded-lg disabled:opacity-50"
+        >
+          Revoke
+        </button>
+      ),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-      <div className="max-w-5xl mx-auto px-4 py-12">
-        <div className="mb-10 flex items-center gap-3">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/10 text-blue-300 ring-1 ring-blue-500/30">
-            <ShieldCheck size={22} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
-              Security Center
-            </h1>
-            <p className="text-slate-400 text-sm">Zero Trust device, session, and access controls for your account.</p>
-          </div>
+    <div>
+      <PageHeader icon={ShieldCheck} title="Security Center" description="Zero Trust device, session, and access controls for your account." />
+
+      {error && (
+        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2">
+          <AlertCircle className="text-destructive" size={18} />
+          <p className="text-destructive text-sm">{error}</p>
         </div>
+      )}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/40 rounded-lg flex items-center gap-2">
-            <AlertCircle className="text-red-400" size={18} />
-            <p className="text-red-200 text-sm">{error}</p>
+      {loading ? (
+        <div className="space-y-8">
+          <StatsSkeleton count={1} />
+          <TableSkeleton />
+        </div>
+      ) : (
+        <div className="space-y-10">
+          <div className="rounded-xl border border-border bg-card p-6 flex flex-col sm:flex-row items-center gap-8">
+            <SecurityScoreGauge score={securityScore} />
+            <div>
+              <h3 className="text-sm font-semibold text-foreground mb-2">Overall Security Score</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Computed from device trust ratio, malware/DLP scan history, digital signature usage, and Zero Trust
+                access policies configured across your files.
+              </p>
+            </div>
           </div>
-        )}
 
-        {loading ? (
-          <div className="flex flex-col items-center py-20">
-            <Loader className="animate-spin text-blue-400" size={40} />
-            <p className="mt-4 text-slate-400">Loading security data…</p>
-          </div>
-        ) : (
-          <div className="space-y-10">
-            {/* Trusted Devices */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <Laptop size={20} className="text-blue-300" />
-                Trusted Devices
-              </h2>
-              {devices.length === 0 ? (
-                <p className="text-slate-500 text-sm">No devices recorded yet - they're added automatically when you log in.</p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {devices.map((d) => (
-                    <div key={d.deviceId} className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-white truncate">
-                            {d.label || `${d.browser || "Unknown"} on ${d.operatingSystem || "Unknown"}`}
-                            {d.isCurrent && (
-                              <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-green-300 bg-green-500/10 ring-1 ring-green-500/30 rounded-full px-2 py-0.5">
-                                This device
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-slate-400 text-xs mt-1">Last seen {formatDate(d.lastSeenAt)}</p>
-                          {d.lastIp && <p className="text-slate-500 text-xs font-mono">{d.lastIp}</p>}
-                        </div>
-                        <button
-                          onClick={() => handleRemoveDevice(d.deviceId)}
-                          disabled={busyId === d.deviceId}
-                          className="flex-shrink-0 p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg disabled:opacity-50"
-                          title="Remove device"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Active Sessions */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <Monitor size={20} className="text-blue-300" />
-                Active Sessions
-              </h2>
-              {sessions.length === 0 ? (
-                <p className="text-slate-500 text-sm">No active sessions recorded.</p>
-              ) : (
-                <div className="rounded-2xl border border-slate-800/80 bg-slate-900/80 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full w-full text-sm">
-                      <thead className="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
-                        <tr>
-                          <th className="px-4 py-3 text-left">Browser / OS</th>
-                          <th className="px-4 py-3 text-left">IP / Country</th>
-                          <th className="px-4 py-3 text-left">Signed in</th>
-                          <th className="px-4 py-3 text-left">Last active</th>
-                          <th className="px-4 py-3 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80">
-                        {sessions.map((s) => (
-                          <tr key={s.sessionId} className="hover:bg-slate-900/70">
-                            <td className="px-4 py-3">
-                              {s.browser || "Unknown"} / {s.operatingSystem || "Unknown"}
-                              {s.isCurrent && (
-                                <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-green-300 bg-green-500/10 ring-1 ring-green-500/30 rounded-full px-2 py-0.5">
-                                  Current
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs">
-                              {s.ip || "unknown"} {s.country && s.country !== "Unknown" ? `(${s.country})` : ""}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">{formatDate(s.createdAt)}</td>
-                            <td className="px-4 py-3 text-slate-300">{formatDate(s.lastActiveAt)}</td>
-                            <td className="px-4 py-3 text-right">
-                              <button
-                                onClick={() => handleRevokeSession(s.sessionId)}
-                                disabled={busyId === s.sessionId}
-                                className="px-3 py-1.5 text-xs font-semibold text-red-300 hover:text-red-200 hover:bg-red-500/10 rounded-lg disabled:opacity-50"
-                              >
-                                Revoke
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* Blocked Access Attempts */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <Ban size={20} className="text-red-300" />
-                Blocked Access Attempts
-              </h2>
-              {blockedAttempts.length === 0 ? (
-                <p className="text-slate-500 text-sm">No blocked download attempts on your files.</p>
-              ) : (
-                <div className="space-y-2">
-                  {blockedAttempts.map((e) => (
-                    <div
-                      key={e.id}
-                      className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3"
-                    >
-                      <Ban size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Laptop size={20} className="text-primary" />
+              Trusted Devices
+            </h2>
+            {devices.length === 0 ? (
+              <EmptyState icon={Laptop} title="No devices yet" description="Devices are added automatically when you log in." />
+            ) : (
+              <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {devices.map((d) => (
+                  <motion.div key={d.deviceId} variants={fadeInUp} className="bg-card border border-border rounded-xl p-4">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-red-100 text-sm">
-                          {e.filename && <span className="font-semibold">{e.filename}: </span>}
-                          {e.message}
+                        <p className="font-semibold text-foreground truncate">
+                          {d.label || `${d.browser || "Unknown"} on ${d.operatingSystem || "Unknown"}`}
+                          {d.isCurrent && <span className="ml-2"><StatusBadgeInline label="This device" /></span>}
                         </p>
-                        <p className="text-slate-500 text-xs mt-1">
+                        <p className="text-muted-foreground text-xs mt-1">Last seen {formatDate(d.lastSeenAt)}</p>
+                        {d.lastIp && <p className="text-muted-foreground/70 text-xs font-mono">{d.lastIp}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDevice(d.deviceId)}
+                        disabled={busyId === d.deviceId}
+                        className="shrink-0 p-2 text-destructive hover:text-destructive/80 hover:bg-destructive/10 rounded-lg disabled:opacity-50"
+                        title="Remove device"
+                        aria-label="Remove device"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </motion.div>
+            )}
+          </section>
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Monitor size={20} className="text-primary" />
+              Active Sessions
+            </h2>
+            <DataTable columns={sessionColumns} rows={sessions} rowKey={(s) => s.sessionId} emptyLabel="No active sessions recorded." />
+          </section>
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Ban size={20} className="text-destructive" />
+              Blocked Access Attempts
+            </h2>
+            {blockedAttempts.length === 0 ? (
+              <EmptyState icon={Ban} title="No blocked attempts" description="No blocked download attempts on your files." />
+            ) : (
+              <div className="space-y-2">
+                {blockedAttempts.map((e) => (
+                  <div key={e.id} className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
+                    <Ban size={16} className="text-destructive shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-foreground text-sm">
+                        {e.filename && <span className="font-semibold">{e.filename}: </span>}
+                        {e.message}
+                      </p>
+                      <p className="text-muted-foreground text-xs mt-1">
+                        {formatDate(e.createdAt)}
+                        {e.ip ? ` · ${e.ip}` : ""}
+                        {e.country && e.country !== "Unknown" ? ` · ${e.country}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <KeyRound size={20} className="text-primary" />
+              Recent Security Events
+            </h2>
+            {activityEvents.length === 0 ? (
+              <EmptyState icon={KeyRound} title="No events yet" description="Security events will appear here as they happen." />
+            ) : (
+              <div className="space-y-2">
+                {activityEvents.map((e) => {
+                  const Icon = eventIcon(e.type);
+                  return (
+                    <div key={e.id} className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                      <Icon size={16} className="text-primary shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-foreground text-sm">{e.message}</p>
+                        <p className="text-muted-foreground text-xs mt-1 flex items-center gap-2">
+                          <Clock size={12} />
                           {formatDate(e.createdAt)}
                           {e.ip ? ` · ${e.ip}` : ""}
-                          {e.country && e.country !== "Unknown" ? ` · ${e.country}` : ""}
                         </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Recent Security Events */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <KeyRound size={20} className="text-blue-300" />
-                Recent Security Events
-              </h2>
-              {activityEvents.length === 0 ? (
-                <p className="text-slate-500 text-sm">No security events yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {activityEvents.map((e) => {
-                    const Icon = eventIcon(e.type);
-                    return (
-                      <div
-                        key={e.id}
-                        className="flex items-start gap-3 rounded-xl border border-slate-800/80 bg-slate-900/70 px-4 py-3"
-                      >
-                        <Icon size={16} className="text-blue-300 flex-shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <p className="text-slate-200 text-sm">{e.message}</p>
-                          <p className="text-slate-500 text-xs mt-1 flex items-center gap-2">
-                            <Clock size={12} />
-                            {formatDate(e.createdAt)}
-                            {e.ip ? ` · ${e.ip}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
-        )}
-      </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
+  );
+}
+
+function StatusBadgeInline({ label }: { label: string }) {
+  return (
+    <span className="text-[10px] font-bold uppercase tracking-wide text-success bg-success/10 ring-1 ring-success/30 rounded-full px-2 py-0.5">
+      {label}
+    </span>
   );
 }

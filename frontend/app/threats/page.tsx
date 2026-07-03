@@ -3,18 +3,19 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import {
-  ShieldAlert,
-  Bug,
-  Ban,
-  ScanSearch,
-  Loader,
-  AlertCircle,
-  CheckCircle,
-  Fingerprint,
-  RotateCcw,
-} from "lucide-react";
+import { apiErrorStatus } from "@/lib/errors";
+import { ShieldAlert, Bug, Ban, ScanSearch, AlertCircle, Fingerprint, RotateCcw } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts";
 import toast from "react-hot-toast";
+import PageHeader from "@/components/design/PageHeader";
+import StatCard from "@/components/design/StatCard";
+import StatusBadge, { riskTone } from "@/components/design/StatusBadge";
+import EmptyState from "@/components/design/EmptyState";
+import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
+import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import { bucketByDay } from "@/lib/chartHelpers";
+import { motion } from "framer-motion";
+import { staggerContainer } from "@/lib/motion";
 
 type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 
@@ -25,10 +26,6 @@ type ScanEntry = {
   claimedMimeType?: string | null;
   detectedMimeType?: string;
   mimeMismatch?: boolean;
-  dangerousExtension?: boolean;
-  dangerousDetectedType?: boolean;
-  hasMacros?: boolean;
-  isEncryptedArchive?: boolean;
   hashes?: { sha256?: string; sha1?: string; md5?: string };
   clamav?: { status: string; threatNames: string[] };
   virusTotal?: { status: string; maliciousCount: number; totalEngines: number; threatNames: string[] };
@@ -54,21 +51,7 @@ type ThreatStats = {
   clamavUnavailableCount: number;
 };
 
-const riskBadgeClass: Record<RiskLevel, string> = {
-  Low: "text-green-300 bg-green-500/10 ring-green-500/30",
-  Medium: "text-yellow-300 bg-yellow-500/10 ring-yellow-500/30",
-  High: "text-orange-300 bg-orange-500/10 ring-orange-500/30",
-  Critical: "text-red-300 bg-red-500/10 ring-red-500/30",
-};
-
-function RiskBadge({ level }: { level: RiskLevel | null | undefined }) {
-  const lvl = level || "Low";
-  return (
-    <span className={`text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ring-1 ${riskBadgeClass[lvl]}`}>
-      {lvl}
-    </span>
-  );
-}
+const RISK_COLORS: Record<string, string> = { Low: "#10B981", Medium: "#F59E0B", High: "#F59E0B", Critical: "#EF4444" };
 
 export default function ThreatCenterPage() {
   const router = useRouter();
@@ -91,8 +74,9 @@ export default function ThreatCenterPage() {
         setScans(scansRes.data || []);
         setQuarantined(quarantinedRes.data || []);
         setStats(statsRes.data || null);
-      } catch (err: any) {
-        if (err?.response?.status === 401 || err?.response?.status === 403) {
+      } catch (err: unknown) {
+        const status = apiErrorStatus(err);
+        if (status === 401 || status === 403) {
           router.push("/login");
           return;
         }
@@ -128,9 +112,7 @@ export default function ThreatCenterPage() {
     }
   };
 
-  const malwareDetections = scans.filter(
-    (s) => s.clamav?.status === "infected" || s.virusTotal?.status === "malicious"
-  );
+  const malwareDetections = scans.filter((s) => s.clamav?.status === "infected" || s.virusTotal?.status === "malicious");
 
   const formatDate = (d: string) => new Date(d).toLocaleString();
   const formatBytes = (n?: number) => {
@@ -140,205 +122,215 @@ export default function ThreatCenterPage() {
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const riskData = stats
+    ? (Object.keys(stats.byRiskLevel) as RiskLevel[]).filter((k) => stats.byRiskLevel[k] > 0).map((k) => ({ name: k, value: stats.byRiskLevel[k] }))
+    : [];
+  const scanTrend = bucketByDay(scans, (s) => s.createdAt, 14);
+
+  const columns: DataTableColumn<ScanEntry>[] = [
+    {
+      key: "file",
+      header: "File",
+      render: (s) => (
+        <span className="max-w-[180px] truncate inline-block" title={s.originalFilename}>
+          {s.originalFilename}
+          {s.mimeMismatch && <span title="Claimed type didn't match detected content" className="ml-1 text-warning">⚠</span>}
+        </span>
+      ),
+    },
+    { key: "size", header: "Size", render: (s) => formatBytes(s.fileSizeBytes) },
+    {
+      key: "sha256",
+      header: "SHA-256",
+      render: (s) => (
+        <span className="font-mono text-xs text-muted-foreground max-w-[140px] truncate inline-block" title={s.hashes?.sha256}>
+          {s.hashes?.sha256?.slice(0, 16)}…
+        </span>
+      ),
+    },
+    {
+      key: "clamav",
+      header: "ClamAV",
+      render: (s) =>
+        s.clamav?.status === "clean" ? (
+          <StatusBadge label="Clean" tone="success" />
+        ) : s.clamav?.status === "infected" ? (
+          <StatusBadge label="Infected" tone="danger" />
+        ) : s.clamav?.status === "unavailable" ? (
+          <StatusBadge label="Unavailable" tone="neutral" />
+        ) : s.clamav?.status === "error" ? (
+          <StatusBadge label="Error" tone="warning" />
+        ) : null,
+    },
+    {
+      key: "vt",
+      header: "VirusTotal",
+      render: (s) =>
+        s.virusTotal?.status === "skipped" ? (
+          <StatusBadge label="Skipped" tone="neutral" />
+        ) : s.virusTotal?.status === "clean" ? (
+          <StatusBadge label="Clean" tone="success" />
+        ) : s.virusTotal?.status === "unknown" ? (
+          <StatusBadge label="Unknown" tone="neutral" />
+        ) : s.virusTotal?.status === "suspicious" ? (
+          <StatusBadge label="Suspicious" tone="warning" />
+        ) : s.virusTotal?.status === "malicious" ? (
+          <StatusBadge label="Malicious" tone="danger" />
+        ) : s.virusTotal?.status === "error" ? (
+          <StatusBadge label="Error" tone="warning" />
+        ) : null,
+    },
+    { key: "risk", header: "Risk", render: (s) => <StatusBadge label={s.riskLevel} tone={riskTone[s.riskLevel] ?? "neutral"} /> },
+    { key: "scanned", header: "Scanned", className: "whitespace-nowrap text-xs text-muted-foreground", render: (s) => formatDate(s.createdAt) },
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-      <div className="max-w-5xl mx-auto px-4 py-12">
-        <div className="mb-10 flex items-center gap-3">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10 text-red-300 ring-1 ring-red-500/30">
-            <ScanSearch size={22} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-orange-400">
-              Threat Center
-            </h1>
-            <p className="text-slate-400 text-sm">Malware scanning, quarantine, and threat intelligence for your uploads.</p>
-          </div>
+    <div>
+      <PageHeader icon={ScanSearch} title="Threat Center" description="Malware scanning, quarantine, and threat intelligence for your uploads." accent="danger" />
+
+      {error && (
+        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2">
+          <AlertCircle className="text-destructive" size={18} />
+          <p className="text-destructive text-sm">{error}</p>
         </div>
+      )}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/40 rounded-lg flex items-center gap-2">
-            <AlertCircle className="text-red-400" size={18} />
-            <p className="text-red-200 text-sm">{error}</p>
-          </div>
-        )}
+      {loading ? (
+        <div className="space-y-8">
+          <StatsSkeleton />
+          <TableSkeleton />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {stats && (
+            <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard label="Total Scans" value={stats.totalScans} icon={Fingerprint} variant="primary" />
+              <StatCard label="Quarantined Files" value={stats.quarantinedFiles} icon={Ban} variant="danger" />
+              <StatCard label="Malware Detections" value={stats.malwareDetections} icon={ShieldAlert} variant="warning" />
+              <StatCard label="Clean Rate" value={stats.totalScans > 0 ? `${Math.round(((stats.totalScans - stats.malwareDetections) / stats.totalScans) * 100)}%` : "100%"} icon={ScanSearch} variant="success" />
+            </motion.div>
+          )}
+          {stats && stats.clamavUnavailableCount > 0 && (
+            <p className="flex items-center gap-2 text-muted-foreground text-xs -mt-4">
+              <AlertCircle size={12} />
+              ClamAV was unavailable for {stats.clamavUnavailableCount} scan(s) in this environment - those scans still ran
+              magic-byte, MIME-mismatch, and VirusTotal checks.
+            </p>
+          )}
 
-        {loading ? (
-          <div className="flex flex-col items-center py-20">
-            <Loader className="animate-spin text-red-400" size={40} />
-            <p className="mt-4 text-slate-400">Loading threat data…</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-xl border border-border bg-card p-6">
+              <h3 className="text-sm font-semibold text-foreground mb-4">Risk Levels</h3>
+              {riskData.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-10 text-center">No scans yet.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={riskData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                      {riskData.map((entry) => (
+                        <Cell key={entry.name} fill={RISK_COLORS[entry.name] || "#64748B"} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            <div className="rounded-xl border border-border bg-card p-6">
+              <h3 className="text-sm font-semibold text-foreground mb-4">Scan Volume (14 days)</h3>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={scanTrend}>
+                  <defs>
+                    <linearGradient id="threatGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+                  <XAxis dataKey="date" stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#64748B" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 8, fontSize: 12 }} />
+                  <Area type="monotone" dataKey="count" stroke="#EF4444" fill="url(#threatGradient)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-10">
-            {/* Stats */}
-            {stats && (
-              <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs">Total Scans</p>
-                  <p className="text-2xl font-bold mt-1">{stats.totalScans}</p>
-                </div>
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs">Quarantined Files</p>
-                  <p className="text-2xl font-bold mt-1 text-red-300">{stats.quarantinedFiles}</p>
-                </div>
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs">Malware Detections</p>
-                  <p className="text-2xl font-bold mt-1 text-orange-300">{stats.malwareDetections}</p>
-                </div>
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs">Risk Breakdown</p>
-                  <div className="flex gap-1.5 mt-2 flex-wrap">
-                    {(Object.keys(stats.byRiskLevel) as RiskLevel[]).map((lvl) => (
-                      <span key={lvl} className={`text-[10px] font-bold rounded-full px-2 py-0.5 ring-1 ${riskBadgeClass[lvl]}`}>
-                        {lvl}: {stats.byRiskLevel[lvl]}
-                      </span>
-                    ))}
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Ban size={20} className="text-destructive" />
+              Quarantined Files
+            </h2>
+            {quarantined.length === 0 ? (
+              <EmptyState icon={Ban} title="Nothing quarantined" description="No uploads have been blocked by the threat scanner." />
+            ) : (
+              <div className="space-y-2">
+                {quarantined.map((f) => (
+                  <div key={f._id} className="flex items-start justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <Bug size={16} className="text-destructive shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-foreground text-sm font-semibold truncate">{f.filename}</p>
+                        <p className="text-muted-foreground text-xs mt-1">
+                          Quarantined {formatDate(f.createdAt)}
+                          {f.scanId?.clamav?.threatNames?.length ? ` · ${f.scanId.clamav.threatNames.join(", ")}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <StatusBadge label={f.riskLevel || "Low"} tone={riskTone[f.riskLevel || "Low"] ?? "neutral"} />
+                      <button
+                        type="button"
+                        onClick={() => handleRelease(f._id)}
+                        disabled={busyId === f._id}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-white/5 rounded-lg disabled:opacity-50"
+                        title="Release from quarantine (owner override)"
+                      >
+                        <RotateCcw size={12} />
+                        Release
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {stats.clamavUnavailableCount > 0 && (
-                  <div className="col-span-2 md:col-span-4 flex items-center gap-2 text-slate-500 text-xs">
-                    <AlertCircle size={12} />
-                    ClamAV was unavailable for {stats.clamavUnavailableCount} scan(s) in this environment - those scans
-                    still ran magic-byte, MIME-mismatch, and VirusTotal checks.
-                  </div>
-                )}
-              </section>
+                ))}
+              </div>
             )}
+          </section>
 
-            {/* Quarantined Files */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <Ban size={20} className="text-red-300" />
-                Quarantined Files
-              </h2>
-              {quarantined.length === 0 ? (
-                <p className="text-slate-500 text-sm">No quarantined files. Nothing you've uploaded has been blocked.</p>
-              ) : (
-                <div className="space-y-2">
-                  {quarantined.map((f) => (
-                    <div key={f._id} className="flex items-start justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <Bug size={16} className="text-red-400 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <p className="text-red-100 text-sm font-semibold truncate">{f.filename}</p>
-                          <p className="text-slate-500 text-xs mt-1">
-                            Quarantined {formatDate(f.createdAt)}
-                            {f.scanId?.clamav?.threatNames?.length ? ` · ${f.scanId.clamav.threatNames.join(", ")}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <RiskBadge level={f.riskLevel} />
-                        <button
-                          onClick={() => handleRelease(f._id)}
-                          disabled={busyId === f._id}
-                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg disabled:opacity-50"
-                          title="Release from quarantine (owner override)"
-                        >
-                          <RotateCcw size={12} />
-                          Release
-                        </button>
-                      </div>
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <ShieldAlert size={20} className="text-warning" />
+              Malware Detections
+            </h2>
+            {malwareDetections.length === 0 ? (
+              <EmptyState icon={ShieldAlert} title="No malware detected" description="Nothing in your uploads has triggered a malware detection." />
+            ) : (
+              <div className="space-y-2">
+                {malwareDetections.map((s) => (
+                  <div key={s._id} className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-foreground text-sm font-semibold truncate">{s.originalFilename}</p>
+                      <StatusBadge label={s.riskLevel} tone={riskTone[s.riskLevel] ?? "neutral"} />
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Malware Detections */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <ShieldAlert size={20} className="text-orange-300" />
-                Malware Detections
-              </h2>
-              {malwareDetections.length === 0 ? (
-                <p className="text-slate-500 text-sm">No malware has been detected in your uploads.</p>
-              ) : (
-                <div className="space-y-2">
-                  {malwareDetections.map((s) => (
-                    <div key={s._id} className="rounded-xl border border-orange-500/30 bg-orange-500/5 px-4 py-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-orange-100 text-sm font-semibold truncate">{s.originalFilename}</p>
-                        <RiskBadge level={s.riskLevel} />
-                      </div>
-                      <p className="text-slate-400 text-xs mt-1">
-                        {s.clamav?.status === "infected" && `ClamAV: ${s.clamav.threatNames.join(", ")}`}
-                        {s.clamav?.status === "infected" && s.virusTotal?.status === "malicious" && " · "}
-                        {s.virusTotal?.status === "malicious" &&
-                          `VirusTotal: ${s.virusTotal.maliciousCount}/${s.virusTotal.totalEngines} engines flagged`}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Scan History */}
-            <section>
-              <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <Fingerprint size={20} className="text-blue-300" />
-                Scan History
-              </h2>
-              {scans.length === 0 ? (
-                <p className="text-slate-500 text-sm">No scans yet - files are scanned automatically before upload.</p>
-              ) : (
-                <div className="rounded-2xl border border-slate-800/80 bg-slate-900/80 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full w-full text-sm">
-                      <thead className="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
-                        <tr>
-                          <th className="px-4 py-3 text-left">File</th>
-                          <th className="px-4 py-3 text-left">Size</th>
-                          <th className="px-4 py-3 text-left">SHA-256</th>
-                          <th className="px-4 py-3 text-left">ClamAV</th>
-                          <th className="px-4 py-3 text-left">VirusTotal</th>
-                          <th className="px-4 py-3 text-left">Risk</th>
-                          <th className="px-4 py-3 text-left">Scanned</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80">
-                        {scans.map((s) => (
-                          <tr key={s._id} className="hover:bg-slate-900/70">
-                            <td className="px-4 py-3 max-w-[180px] truncate" title={s.originalFilename}>
-                              {s.originalFilename}
-                              {s.mimeMismatch && (
-                                <span title="Claimed type didn't match detected content" className="ml-1 text-yellow-400">
-                                  ⚠
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">{formatBytes(s.fileSizeBytes)}</td>
-                            <td className="px-4 py-3 font-mono text-xs text-slate-400 max-w-[140px] truncate" title={s.hashes?.sha256}>
-                              {s.hashes?.sha256?.slice(0, 16)}…
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">
-                              {s.clamav?.status === "clean" && <span className="text-green-300">Clean</span>}
-                              {s.clamav?.status === "infected" && <span className="text-red-300">Infected</span>}
-                              {s.clamav?.status === "unavailable" && <span className="text-slate-500">Unavailable</span>}
-                              {s.clamav?.status === "error" && <span className="text-yellow-400">Error</span>}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">
-                              {s.virusTotal?.status === "skipped" && <span className="text-slate-500">Skipped</span>}
-                              {s.virusTotal?.status === "clean" && <span className="text-green-300">Clean</span>}
-                              {s.virusTotal?.status === "unknown" && <span className="text-slate-500">Unknown</span>}
-                              {s.virusTotal?.status === "suspicious" && <span className="text-yellow-400">Suspicious</span>}
-                              {s.virusTotal?.status === "malicious" && <span className="text-red-300">Malicious</span>}
-                              {s.virusTotal?.status === "error" && <span className="text-yellow-400">Error</span>}
-                            </td>
-                            <td className="px-4 py-3">
-                              <RiskBadge level={s.riskLevel} />
-                            </td>
-                            <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{formatDate(s.createdAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <p className="text-muted-foreground text-xs mt-1">
+                      {s.clamav?.status === "infected" && `ClamAV: ${s.clamav.threatNames.join(", ")}`}
+                      {s.clamav?.status === "infected" && s.virusTotal?.status === "malicious" && " · "}
+                      {s.virusTotal?.status === "malicious" && `VirusTotal: ${s.virusTotal.maliciousCount}/${s.virusTotal.totalEngines} engines flagged`}
+                    </p>
                   </div>
-                </div>
-              )}
-            </section>
-          </div>
-        )}
-      </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
+              <Fingerprint size={20} className="text-primary" />
+              Scan History
+            </h2>
+            <DataTable columns={columns} rows={scans} rowKey={(s) => s._id} emptyLabel="No scans yet - files are scanned automatically before upload." />
+          </section>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Navbar from "@/components/Navbar";
+import AppShell from "@/components/shell/AppShell";
 import ToasterClient from "@/components/ToasterClient";
 import { CryptoKeyProvider } from "@/context/CryptoKeyContext";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,12 +29,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`dark ${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <CryptoKeyProvider>
-            <Navbar />
-            {children}
+          <TooltipProvider>
+            <AppShell>{children}</AppShell>
             <ToasterClient />
+          </TooltipProvider>
         </CryptoKeyProvider>
       </body>
     </html>

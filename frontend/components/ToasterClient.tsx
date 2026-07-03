@@ -1,5 +1,5 @@
 "use client";
-import { Toaster, ToastBar, toast } from "react-hot-toast";
+import { Toaster, ToastBar, toast, type Toast } from "react-hot-toast";
 import { CheckCircle2, XCircle, Loader2, Info, X as Close } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -43,7 +43,7 @@ export default function ToasterClient() {
 }
 
 interface EnhancedToastProps {
-  toast: any;
+  toast: Toast;
   onDismiss: () => void;
 }
 
@@ -53,7 +53,7 @@ function EnhancedToast({ toast: t, onDismiss }: EnhancedToastProps) {
 
   // Progress bar animation
   useEffect(() => {
-    if (t.type === "loading" || !t.duration || t.paused) return;
+    if (t.type === "loading" || !t.duration || t.pauseDuration > 0) return;
 
     const startTime = Date.now();
     const duration = t.duration;
@@ -71,7 +71,7 @@ function EnhancedToast({ toast: t, onDismiss }: EnhancedToastProps) {
     }, 16); // ~60fps
 
     return () => clearInterval(interval);
-  }, [t.duration, t.type, t.paused, isHovered]);
+  }, [t.duration, t.type, t.pauseDuration, isHovered]);
 
   const getTypeStyles = () => {
     switch (t.type) {

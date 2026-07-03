@@ -2,9 +2,9 @@
 import { useEffect, useState, useRef } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, Globe2, ScanSearch, Bug, Eye } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle, Loader, X, FileIcon, Lock, Copy, Check, ChevronDown, ChevronUp, Globe2, Eye } from "lucide-react";
 import toast from "react-hot-toast";
-import Navbar from "@/components/Navbar";
+import { motion } from "framer-motion";
 import {
   generateAESKey,
   encryptFile,
@@ -17,13 +17,31 @@ import {
   signEncryptedFile,
 } from "@/lib/crypto/cryptoHelpers";
 import { useCryptoKey } from "@/context/CryptoKeyContext";
+import { apiErrorMessage } from "@/lib/errors";
 import UnlockKeyModal from "@/components/UnlockKeyModal";
+import PageHeader from "@/components/design/PageHeader";
+import ProgressTimeline, { type TimelineStep, type TimelineStepState } from "@/components/design/ProgressTimeline";
+import StatusBadge from "@/components/design/StatusBadge";
+
+type ThreatScanResult = {
+  scanId: string;
+  riskLevel: "Low" | "Medium" | "High" | "Critical";
+  quarantined: boolean;
+  clamav?: { status: string };
+};
+
+type DLPScanResult = {
+  dlpScanId: string;
+  decision: "allow" | "warn" | "require_approval" | "block";
+  severity: "None" | "Low" | "Medium" | "High" | "Critical";
+  supported: boolean;
+  matchedPatterns?: string[];
+};
 
 export default function UploadFile() {
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [password, setPassword] = useState("");
@@ -38,15 +56,19 @@ export default function UploadFile() {
   // see backend/controllers/threat.controller.js for why this is the one deliberate moment the
   // server sees unencrypted bytes (scoped to this single request, never persisted).
   const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "clean" | "flagged" | "blocked">("idle");
-  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanResult, setScanResult] = useState<ThreatScanResult | null>(null);
   // Phase 5: DLP scan, run right after the malware scan and before encryption - see
   // backend/controllers/dlp.controller.js for why this is also a deliberate, scoped exception
   // to the zero-knowledge model. Only supported (text-based) files are actually inspected;
   // binary files are skipped gracefully and always come back as "allow".
   const [dlpStatus, setDlpStatus] = useState<"idle" | "scanning" | "clean" | "warned" | "pending_approval" | "blocked">("idle");
-  const [dlpResult, setDlpResult] = useState<any>(null);
+  const [dlpResult, setDlpResult] = useState<DLPScanResult | null>(null);
   const [showDlpApprovalModal, setShowDlpApprovalModal] = useState(false);
   const [dlpApproving, setDlpApproving] = useState(false);
+  // Track encryption/upload network stages, purely for the ProgressTimeline UI below - doesn't
+  // change any upload behavior.
+  const [encryptStatus, setEncryptStatus] = useState<"idle" | "active" | "done" | "error">("idle");
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "active" | "done" | "error">("idle");
   // Holds the in-flight upload continuation while we wait for the user to respond to a
   // "require_approval" DLP finding via the modal above.
   const pendingUploadRef = useRef<null | (() => Promise<void>)>(null);
@@ -199,8 +221,9 @@ export default function UploadFile() {
 
     setUploading(true);
     setError("");
-    setUploadProgress(0);
     setSigningStatus("idle");
+    setEncryptStatus("idle");
+    setUploadStatus("idle");
     setScanStatus("scanning");
     setScanResult(null);
     setDlpStatus("scanning");
@@ -233,9 +256,9 @@ export default function UploadFile() {
 
       setScanStatus(scanRes.data.riskLevel === "Low" ? "clean" : "flagged");
       scanId = scanRes.data.scanId;
-    } catch (scanErr: any) {
+    } catch (scanErr: unknown) {
       setScanStatus("idle");
-      const msg = scanErr?.response?.data?.error || "Threat scan failed. Please try again.";
+      const msg = apiErrorMessage(scanErr, "Threat scan failed. Please try again.");
       setError(msg);
       toast.error("Threat scan failed");
       setUploading(false);
@@ -280,8 +303,8 @@ export default function UploadFile() {
             );
             setShowDlpApprovalModal(false);
             await finishUpload(currentFile, token, scanId, dlpScanId);
-          } catch (ackErr: any) {
-            toast.error(ackErr?.response?.data?.error || "Failed to confirm - please try again");
+          } catch (ackErr: unknown) {
+            toast.error(apiErrorMessage(ackErr, "Failed to confirm - please try again"));
             setUploading(false);
           } finally {
             setDlpApproving(false);
@@ -293,9 +316,9 @@ export default function UploadFile() {
 
       setDlpStatus(dlpRes.data.decision === "warn" ? "warned" : "clean");
       if (dlpRes.data.decision === "warn") toast("Sensitive data detected - review before sharing", { icon: "⚠️" });
-    } catch (dlpErr: any) {
+    } catch (dlpErr: unknown) {
       setDlpStatus("idle");
-      const msg = dlpErr?.response?.data?.error || "DLP scan failed. Please try again.";
+      const msg = apiErrorMessage(dlpErr, "DLP scan failed. Please try again.");
       setError(msg);
       toast.error("DLP scan failed");
       setUploading(false);
@@ -317,17 +340,6 @@ export default function UploadFile() {
    *  from uploadFile() so it can be invoked either immediately (DLP decision allow/warn) or
    *  later, once the user has explicitly confirmed a "require_approval" DLP finding via the modal. */
   const finishUpload = async (currentFile: File, token: string, scanId: string, dlpScanId: string) => {
-    // Simulate progress for better UX (actual progress can be tracked with axios)
-    const progressInterval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return prev;
-        }
-        return prev + Math.random() * 30;
-      });
-    }, 300);
-
     try {
       // --- 1. Encrypt the file entirely in the browser before any network request ---
       let ciphertext: ArrayBuffer;
@@ -337,6 +349,7 @@ export default function UploadFile() {
       let fragmentKeyBase64Url: string | null = null;
       let fileSignature: Awaited<ReturnType<typeof signEncryptedFile>> | null = null;
 
+      setEncryptStatus("active");
       try {
         const aesKey = await generateAESKey();
         const encrypted = await encryptFile(currentFile, aesKey);
@@ -361,6 +374,7 @@ export default function UploadFile() {
           const raw = await exportAESKeyRaw(aesKey);
           fragmentKeyBase64Url = bufToBase64Url(raw);
         }
+        setEncryptStatus("done");
 
         // Phase 2: sign the encrypted file (hash + ECDSA signature) so downloaders can verify
         // authenticity/integrity before decrypting. Signing key may be missing for accounts
@@ -373,8 +387,8 @@ export default function UploadFile() {
         } else {
           setSigningStatus("unsigned");
         }
-      } catch (cryptoErr: any) {
-        clearInterval(progressInterval);
+      } catch (cryptoErr: unknown) {
+        setEncryptStatus("error");
         console.error("Client-side encryption failed:", cryptoErr);
         setError("Failed to encrypt file locally. Please try again or use a different browser.");
         toast.error("Encryption failed");
@@ -413,6 +427,7 @@ export default function UploadFile() {
         formData.append("policy", JSON.stringify(policyPayload));
       }
 
+      setUploadStatus("active");
       const request = api.post("/files/upload", formData, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -425,14 +440,12 @@ export default function UploadFile() {
         {
           loading: "Uploading encrypted file...",
           success: "File uploaded successfully",
-          error: (err: any) =>
-            err?.response?.data?.error || err?.response?.data?.message || "Upload failed. Please try again.",
+          error: (err: unknown) => apiErrorMessage(err, "Upload failed. Please try again."),
         },
         { id: "upload" }
       );
 
-      clearInterval(progressInterval);
-      setUploadProgress(100);
+      setUploadStatus("done");
       setSuccess(true);
       setFile(null);
 
@@ -444,15 +457,13 @@ export default function UploadFile() {
           : `${origin}/file/${fileId}`;
         setShareLink(link);
       }
-    } catch (err: any) {
-      clearInterval(progressInterval);
-      const serverError = err?.response?.data?.error || err?.response?.data?.message;
-      const errorMessage = serverError || err.message || "Upload failed. Please try again.";
-      setError(errorMessage);
+    } catch (err: unknown) {
+      setUploadStatus("error");
+      setError(apiErrorMessage(err, "Upload failed. Please try again."));
       // toast handled by toast.promise
       if (process.env.NODE_ENV !== "production") {
         // Helpful debug info during development
-        console.error("Upload failed:", err?.response?.data || err);
+        console.error("Upload failed:", err);
       }
     } finally {
       setUploading(false);
@@ -473,430 +484,383 @@ export default function UploadFile() {
   const handleRemoveFile = () => {
     setFile(null);
     setError("");
-    setUploadProgress(0);
   };
 
+  const stepState = (
+    achieved: TimelineStepState,
+    active: boolean,
+    errored: boolean,
+    reachedYet: boolean
+  ): TimelineStepState => {
+    if (errored) return "error";
+    if (active) return "active";
+    if (reachedYet) return achieved;
+    return "pending";
+  };
+
+  const timelineSteps: TimelineStep[] = uploading || success || error
+    ? [
+        {
+          key: "scan",
+          label: "Threat Scan",
+          state: stepState("done", scanStatus === "scanning", scanStatus === "blocked", scanStatus !== "idle"),
+          detail: scanResult ? `${scanResult.riskLevel} risk` : undefined,
+        },
+        {
+          key: "dlp",
+          label: "DLP Scan",
+          state: stepState(
+            "done",
+            dlpStatus === "scanning" || dlpStatus === "pending_approval",
+            dlpStatus === "blocked",
+            dlpStatus !== "idle"
+          ),
+          detail: dlpResult ? (dlpResult.supported === false ? "skipped (binary)" : `${dlpResult.severity} severity`) : undefined,
+        },
+        {
+          key: "encrypt",
+          label: "Encryption",
+          state: stepState("done", encryptStatus === "active", encryptStatus === "error", encryptStatus !== "idle"),
+          detail: "AES-256-GCM, client-side",
+        },
+        {
+          key: "sign",
+          label: "Signing",
+          state: stepState(
+            signingStatus === "unsigned" ? "done" : "done",
+            signingStatus === "signing",
+            false,
+            signingStatus !== "idle"
+          ),
+          detail: signingStatus === "unsigned" ? "unsigned (no signing key)" : signingStatus === "signed" ? "ECDSA P-256" : undefined,
+        },
+        {
+          key: "upload",
+          label: "Uploading",
+          state: stepState("done", uploadStatus === "active", uploadStatus === "error", uploadStatus !== "idle"),
+        },
+        {
+          key: "complete",
+          label: "Completed",
+          state: success ? "done" : "pending",
+        },
+      ]
+    : [];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4 py-8">
-      {/* Animated background blobs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 right-10 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: "2s" }}></div>
-      </div>
+    <div className="max-w-5xl mx-auto">
+      <PageHeader icon={Upload} title="Upload File" description="Encrypt, scan, sign, and share a file securely." />
 
-      <div className="w-full max-w-2xl relative z-10">
-        {/* Card */}
-        <div className="bg-slate-800 bg-opacity-80 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div className="relative h-32 bg-gradient-to-r from-blue-600 to-cyan-600 flex items-center justify-center overflow-hidden">
-            <div className="absolute inset-0 opacity-20">
-              <div className="absolute top-0 left-0 w-40 h-40 bg-white rounded-full mix-blend-multiply filter blur-2xl"></div>
-              <div className="absolute bottom-0 right-0 w-40 h-40 bg-white rounded-full mix-blend-multiply filter blur-2xl"></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-card border border-border rounded-2xl p-6 sm:p-8">
+          {error && (
+            <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3">
+              <AlertCircle size={20} className="text-destructive shrink-0 mt-0.5" />
+              <p className="text-destructive text-sm">{error}</p>
             </div>
-            <div className="relative">
-              <div className="bg-white bg-opacity-20 p-3 rounded-full backdrop-blur-md">
-                <Upload size={32} className="text-white" />
-              </div>
-            </div>
-          </div>
+          )}
 
-          {/* Content */}
-          <div className="p-8">
-            <h1 className="text-3xl font-bold text-white mb-2 text-center">Upload File</h1>
-            <p className="text-slate-400 text-center mb-8">
-              Securely upload files with encryption protection
-            </p>
-
-            {/* Error Alert */}
-            {error && (
-              <div className="mb-6 p-4 bg-red-500 bg-opacity-20 border border-red-500 border-opacity-50 rounded-lg flex items-start gap-3">
-                {scanStatus === "blocked" ? (
-                  <Bug size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
-                ) : (
-                  <AlertCircle size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
-                )}
-                <p className="text-red-200 text-sm">{error}</p>
-              </div>
-            )}
-
-            {/* Success Alert */}
-            {success && (
-              <div className="mb-6 p-4 bg-green-500 bg-opacity-20 border border-green-500 border-opacity-50 rounded-lg">
-                <div className="flex items-start gap-3">
-                  <CheckCircle size={20} className="text-green-400 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-green-200 font-semibold text-sm">File encrypted &amp; uploaded successfully!</p>
-                    <p className="text-green-200 text-xs mt-1">
-                      This link contains the only copy of the decryption key outside your account — save it now.
-                    </p>
-                  </div>
+          {success && (
+            <div className="mb-6 p-4 bg-success/10 border border-success/30 rounded-lg">
+              <div className="flex items-start gap-3">
+                <CheckCircle size={20} className="text-success shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-success font-semibold text-sm">File encrypted &amp; uploaded successfully!</p>
+                  <p className="text-success/80 text-xs mt-1">
+                    This link contains the only copy of the decryption key outside your account - save it now.
+                  </p>
                 </div>
-                {shareLink && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <code className="flex-1 min-w-0 text-xs text-slate-200 bg-slate-900 bg-opacity-60 rounded-lg px-3 py-2 break-all">
-                      {shareLink}
-                    </code>
-                    <button
-                      onClick={handleCopyShareLink}
-                      className="flex-shrink-0 p-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
-                      title="Copy link"
-                    >
-                      {linkCopied ? <Check size={16} /> : <Copy size={16} />}
-                    </button>
-                  </div>
-                )}
-                {scanResult && (
-                  <div className="mt-3 flex items-center gap-2 text-xs">
-                    <ScanSearch size={14} className={scanStatus === "clean" ? "text-green-300" : "text-yellow-300"} />
-                    <span className={scanStatus === "clean" ? "text-green-300" : "text-yellow-300"}>
-                      Threat scan: {scanResult.riskLevel} risk
-                      {scanResult.clamav?.status === "unavailable" && " (ClamAV unavailable in this environment)"}
-                    </span>
-                  </div>
-                )}
+              </div>
+              {shareLink && (
+                <div className="mt-3 flex items-center gap-2">
+                  <code className="flex-1 min-w-0 text-xs text-foreground bg-background/60 rounded-lg px-3 py-2 break-all">
+                    {shareLink}
+                  </code>
+                  <button type="button" onClick={handleCopyShareLink} className="shrink-0 p-2 bg-success hover:bg-success/90 text-white rounded-lg" title="Copy link">
+                    {linkCopied ? <Check size={16} /> : <Copy size={16} />}
+                  </button>
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {scanResult && <StatusBadge label={`Threat: ${scanResult.riskLevel}`} tone={scanStatus === "clean" ? "success" : "warning"} />}
                 {dlpResult && (
-                  <div className="mt-3 flex items-center gap-2 text-xs">
-                    <Eye size={14} className={dlpStatus === "clean" ? "text-green-300" : "text-yellow-300"} />
-                    <span className={dlpStatus === "clean" ? "text-green-300" : "text-yellow-300"}>
-                      {dlpResult.supported === false
-                        ? "DLP scan: skipped (binary/unsupported file type)"
-                        : `DLP scan: ${dlpResult.severity} severity${
-                            dlpResult.matchedPatterns?.length ? ` (${dlpResult.matchedPatterns.join(", ")})` : ""
-                          }`}
-                    </span>
-                  </div>
+                  <StatusBadge
+                    label={dlpResult.supported === false ? "DLP: skipped" : `DLP: ${dlpResult.severity}`}
+                    tone={dlpStatus === "clean" ? "success" : "warning"}
+                  />
                 )}
                 {signingStatus === "signed" ? (
-                  <div className="mt-3 flex items-center gap-2 text-green-300 text-xs">
-                    <ShieldCheck size={14} />
-                    <span>Digitally signed (ECDSA P-256) - recipients can verify this file wasn&apos;t tampered with.</span>
-                  </div>
+                  <StatusBadge label="Digitally Signed" tone="success" />
                 ) : signingStatus === "unsigned" ? (
-                  <div className="mt-3 flex items-center gap-2 text-yellow-300 text-xs">
-                    <ShieldAlert size={14} />
-                    <span>Uploaded without a digital signature - your signing key isn&apos;t set up on this device yet.</span>
-                  </div>
+                  <StatusBadge label="Unsigned" tone="warning" />
                 ) : null}
-                <button
-                  onClick={() => router.push("/dashboard")}
-                  className="mt-3 text-green-300 text-xs font-semibold hover:text-green-200 transition-colors"
-                >
-                  Go to dashboard →
-                </button>
               </div>
-            )}
+              <button type="button" onClick={() => router.push("/files")} className="mt-4 text-success text-xs font-semibold hover:text-success/80 transition-colors">
+                Go to files →
+              </button>
+            </div>
+          )}
 
-            {/* Drag & Drop Area */}
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => !uploading && document.getElementById("fileInput")?.click()}
-              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all mb-6 ${
-                isDragging
-                  ? "border-blue-400 bg-blue-500 bg-opacity-20"
-                  : "border-slate-600 hover:border-blue-500 hover:bg-blue-500 hover:bg-opacity-10"
-              } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              <div className="flex flex-col items-center gap-3">
-                <div className={`transition-transform ${isDragging ? "scale-110" : ""}`}>
-                  <Upload size={48} className="text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-white mb-1">
-                    {file ? "File selected" : "Drag and drop your file"}
-                  </h3>
-                  <p className="text-slate-400 text-sm">
-                    {file ? "Click to change file" : "or click to select from your device"}
-                  </p>
-                  <p className="text-slate-500 text-xs mt-2">Max file size: 100MB</p>
-                </div>
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => !uploading && document.getElementById("fileInput")?.click()}
+            className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all mb-6 ${
+              isDragging ? "border-primary bg-primary/10" : "border-border hover:border-primary/60 hover:bg-primary/5"
+            } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            <div className="flex flex-col items-center gap-3">
+              <motion.div animate={isDragging ? { scale: 1.1 } : { scale: 1 }}>
+                <Upload size={48} className="text-primary" />
+              </motion.div>
+              <div>
+                <h3 className="text-xl font-bold text-foreground mb-1">{file ? "File selected" : "Drag and drop your file"}</h3>
+                <p className="text-muted-foreground text-sm">{file ? "Click to change file" : "or click to select from your device"}</p>
+                <p className="text-muted-foreground/70 text-xs mt-2">Max file size: 100MB</p>
               </div>
-
-              <input
-                id="fileInput"
-                type="file"
-                hidden
-                onChange={(e) => {
-                  const selected = e.currentTarget.files?.[0] ?? null;
-                  handleFileSelect(selected);
-                }}
-                disabled={uploading}
-                accept={ALLOWED_TYPES.join(",")}
-              />
             </div>
 
-            {/* Selected File Info */}
-            {file && (
-              <div className="mb-6 p-4 bg-slate-700 bg-opacity-50 border border-slate-600 rounded-lg">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <FileIcon size={24} className="text-blue-400 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-semibold text-white truncate">{file.name}</p>
-                      <p className="text-slate-400 text-sm">{formatFileSize(file.size)}</p>
-                    </div>
+            <input
+              id="fileInput"
+              type="file"
+              hidden
+              onChange={(e) => {
+                const selected = e.currentTarget.files?.[0] ?? null;
+                handleFileSelect(selected);
+              }}
+              disabled={uploading}
+              accept={ALLOWED_TYPES.join(",")}
+            />
+          </div>
+
+          {file && (
+            <div className="mb-6 p-4 bg-muted/40 border border-border rounded-lg">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <FileIcon size={24} className="text-primary shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground truncate">{file.name}</p>
+                    <p className="text-muted-foreground text-sm">{formatFileSize(file.size)}</p>
                   </div>
-                  <button
-                    onClick={handleRemoveFile}
-                    disabled={uploading}
-                    className="text-slate-400 hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-50"
-                  >
-                    <X size={20} />
-                  </button>
                 </div>
-                {/* Optional Password */}
-                <div className="mt-4 grid grid-cols-1 gap-3">
-                  <label className="flex items-center gap-2 text-slate-300 text-sm">
+                <button type="button" onClick={handleRemoveFile} disabled={uploading} aria-label="Remove file" className="text-muted-foreground hover:text-destructive transition-colors shrink-0 disabled:opacity-50">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3">
+                <label className="flex items-center gap-2 text-foreground text-sm">
+                  <input type="checkbox" checked={usePassword} onChange={(e) => setUsePassword(e.target.checked)} disabled={uploading} />
+                  Protect with password
+                </label>
+                {usePassword && (
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-3 top-3.5 text-muted-foreground" />
                     <input
-                      type="checkbox"
-                      checked={usePassword}
-                      onChange={(e) => setUsePassword(e.target.checked)}
+                      type="text"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter a download password"
+                      className="w-full pl-10 pr-4 py-3 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
                       disabled={uploading}
                     />
-                    Protect with password
-                  </label>
-                  {usePassword && (
-                    <div className="relative">
-                      <Lock size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                    <p className="text-muted-foreground text-xs mt-2">Recipients must provide this password to download.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="maxDownloads" className="block text-foreground text-xs font-semibold mb-2">Max Downloads</label>
+                  <input
+                    id="maxDownloads"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={maxDownloads}
+                    onChange={(e) => setMaxDownloads(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
+                    disabled={uploading}
+                  />
+                  <p className="text-muted-foreground text-xs mt-1">1-100 downloads</p>
+                </div>
+                <div>
+                  <label htmlFor="expiryHours" className="block text-foreground text-xs font-semibold mb-2">Expiry (hours)</label>
+                  <input
+                    id="expiryHours"
+                    type="number"
+                    min="1"
+                    max="720"
+                    value={expiryHours}
+                    onChange={(e) => setExpiryHours(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all"
+                    disabled={uploading}
+                  />
+                  <p className="text-muted-foreground text-xs mt-1">Up to 30 days</p>
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-border pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowPolicy(!showPolicy)}
+                  disabled={uploading}
+                  className="w-full flex items-center justify-between text-foreground text-xs font-semibold"
+                >
+                  <span className="flex items-center gap-2">
+                    <Globe2 size={14} />
+                    Advanced Security Policy (Zero Trust)
+                  </span>
+                  {showPolicy ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+
+                {showPolicy && (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-muted-foreground text-xs">
+                      Every rule below is optional. Leave everything blank for an unrestricted file - this only
+                      applies extra checks the file&apos;s recipients must pass before downloading.
+                    </p>
+
+                    <div>
+                      <label className="block text-foreground text-xs font-semibold mb-1">Allowed countries</label>
                       <input
                         type="text"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Enter a download password"
-                        className="w-full pl-10 pr-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
+                        value={allowedCountries}
+                        onChange={(e) => setAllowedCountries(e.target.value)}
+                        placeholder="US, IN, GB (comma-separated ISO codes)"
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm placeholder-muted-foreground focus:outline-none focus:border-primary"
                         disabled={uploading}
                       />
-                      <p className="text-slate-500 text-xs mt-2">Recipients must provide this password to download.</p>
                     </div>
-                  )}
-                </div>
 
-                {/* Download Limits & Expiry */}
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-300 text-xs font-semibold mb-2">Max Downloads</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={maxDownloads}
-                      onChange={(e) => setMaxDownloads(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
-                      disabled={uploading}
-                    />
-                    <p className="text-slate-500 text-xs mt-1">1-100 downloads</p>
-                  </div>
-                  <div>
-                    <label className="block text-slate-300 text-xs font-semibold mb-2">Expiry (hours)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="720"
-                      value={expiryHours}
-                      onChange={(e) => setExpiryHours(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-all"
-                      disabled={uploading}
-                    />
-                    <p className="text-slate-500 text-xs mt-1">Up to 30 days</p>
-                  </div>
-                </div>
+                    <div>
+                      <label className="block text-foreground text-xs font-semibold mb-1">Allowed IP addresses</label>
+                      <input
+                        type="text"
+                        value={allowedIPs}
+                        onChange={(e) => setAllowedIPs(e.target.value)}
+                        placeholder="203.0.113.5, 198.51.100.2 (comma-separated)"
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm placeholder-muted-foreground focus:outline-none focus:border-primary"
+                        disabled={uploading}
+                      />
+                    </div>
 
-                {/* Phase 3: Zero Trust access policy (optional, collapsed by default) */}
-                <div className="mt-4 border-t border-slate-600 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowPolicy(!showPolicy)}
-                    disabled={uploading}
-                    className="w-full flex items-center justify-between text-slate-300 text-xs font-semibold"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Globe2 size={14} />
-                      Advanced Security Policy (Zero Trust)
-                    </span>
-                    {showPolicy ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </button>
-
-                  {showPolicy && (
-                    <div className="mt-3 space-y-3">
-                      <p className="text-slate-500 text-xs">
-                        Every rule below is optional. Leave everything blank for an unrestricted file - this only
-                        applies extra checks the file's recipients must pass before downloading.
-                      </p>
-
-                      <div>
-                        <label className="block text-slate-300 text-xs font-semibold mb-1">Allowed countries</label>
-                        <input
-                          type="text"
-                          value={allowedCountries}
-                          onChange={(e) => setAllowedCountries(e.target.value)}
-                          placeholder="US, IN, GB (comma-separated ISO codes)"
-                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          disabled={uploading}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-slate-300 text-xs font-semibold mb-1">Allowed IP addresses</label>
-                        <input
-                          type="text"
-                          value={allowedIPs}
-                          onChange={(e) => setAllowedIPs(e.target.value)}
-                          placeholder="203.0.113.5, 198.51.100.2 (comma-separated)"
-                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          disabled={uploading}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="flex items-center gap-2 text-slate-300 text-xs font-semibold mb-2">
+                    <div>
+                      <label className="flex items-center gap-2 text-foreground text-xs font-semibold mb-2">
+                        <input type="checkbox" checked={businessHoursEnabled} onChange={(e) => setBusinessHoursEnabled(e.target.checked)} disabled={uploading} />
+                        Restrict to specific hours (UTC)
+                      </label>
+                      {businessHoursEnabled && (
+                        <div className="grid grid-cols-2 gap-3">
                           <input
-                            type="checkbox"
-                            checked={businessHoursEnabled}
-                            onChange={(e) => setBusinessHoursEnabled(e.target.checked)}
+                            type="number"
+                            min="0"
+                            max="23"
+                            value={businessStartHour}
+                            onChange={(e) => setBusinessStartHour(e.target.value)}
+                            placeholder="Start hour"
+                            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-primary"
                             disabled={uploading}
                           />
-                          Restrict to specific hours (UTC)
-                        </label>
-                        {businessHoursEnabled && (
-                          <div className="grid grid-cols-2 gap-3">
-                            <input
-                              type="number"
-                              min="0"
-                              max="23"
-                              value={businessStartHour}
-                              onChange={(e) => setBusinessStartHour(e.target.value)}
-                              placeholder="Start hour"
-                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
-                              disabled={uploading}
-                            />
-                            <input
-                              type="number"
-                              min="0"
-                              max="24"
-                              value={businessEndHour}
-                              onChange={(e) => setBusinessEndHour(e.target.value)}
-                              placeholder="End hour"
-                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
-                              disabled={uploading}
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="block text-slate-300 text-xs font-semibold mb-1">Max distinct devices</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={maxDevices}
-                          onChange={(e) => setMaxDevices(e.target.value)}
-                          placeholder="0 = unlimited"
-                          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          disabled={uploading}
-                        />
-                      </div>
-
-                      <label className="flex items-center gap-2 text-slate-300 text-xs font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={requireApproval}
-                          onChange={(e) => setRequireApproval(e.target.checked)}
-                          disabled={uploading}
-                        />
-                        Require an authenticated, trusted-device recipient
-                      </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="24"
+                            value={businessEndHour}
+                            onChange={(e) => setBusinessEndHour(e.target.value)}
+                            placeholder="End hour"
+                            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-primary"
+                            disabled={uploading}
+                          />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
 
-            {/* Upload Progress */}
-            {uploading && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-slate-300 font-semibold text-sm">
-                    {scanStatus === "scanning"
-                      ? "Scanning for threats..."
-                      : dlpStatus === "scanning"
-                      ? "Scanning for sensitive data (DLP)..."
-                      : dlpStatus === "pending_approval"
-                      ? "Waiting for your approval..."
-                      : signingStatus === "signing"
-                      ? "Signing file (ECDSA P-256)..."
-                      : "Uploading..."}
-                  </p>
-                  <p className="text-blue-400 font-semibold text-sm">{Math.round(uploadProgress)}%</p>
-                </div>
-                <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
+                    <div>
+                      <label className="block text-foreground text-xs font-semibold mb-1">Max distinct devices</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={maxDevices}
+                        onChange={(e) => setMaxDevices(e.target.value)}
+                        placeholder="0 = unlimited"
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm placeholder-muted-foreground focus:outline-none focus:border-primary"
+                        disabled={uploading}
+                      />
+                    </div>
 
-            {/* File Info Box */}
-            {!file && (
-              <div className="mb-6 p-4 bg-blue-500 bg-opacity-10 border border-blue-500 border-opacity-30 rounded-lg flex items-start gap-3">
-                <Lock size={18} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-blue-200 font-semibold text-sm">Your file is protected</p>
-                  <p className="text-blue-200 text-xs mt-1">
-                    All files are encrypted with AES-256 and can be shared with time-limited links
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Upload Button */}
-            <button
-              onClick={uploadFile}
-              disabled={!file || uploading || success || checkingKey}
-              className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-lg hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-600 disabled:to-slate-600 transition-all shadow-lg hover:shadow-blue-500/50 disabled:shadow-none flex items-center justify-center gap-2"
-            >
-              {uploading ? (
-                <>
-                  <Loader size={20} className="animate-spin" />
-                  Uploading...
-                </>
-              ) : success ? (
-                <>
-                  <CheckCircle size={20} />
-                  Upload Complete
-                </>
-              ) : file ? (
-                <>
-                  <Upload size={20} />
-                  Upload File
-                </>
-              ) : (
-                <>
-                  <Upload size={20} />
-                  Select a File First
-                </>
-              )}
-            </button>
-
-            {/* Supported Formats */}
-            <div className="mt-6 pt-6 border-t border-slate-700">
-              <p className="text-slate-400 text-xs font-semibold mb-2">Supported formats:</p>
-              <div className="grid grid-cols-3 gap-2">
-                {["PDF", "DOC", "XLS", "JPG", "PNG", "TXT", "ZIP", "GIF", "DOCX"].map((format) => (
-                  <div key={format} className="bg-slate-700 bg-opacity-50 rounded px-2 py-1 text-center">
-                    <p className="text-slate-300 text-xs font-medium">{format}</p>
+                    <label className="flex items-center gap-2 text-foreground text-xs font-semibold">
+                      <input type="checkbox" checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} disabled={uploading} />
+                      Require an authenticated, trusted-device recipient
+                    </label>
                   </div>
-                ))}
+                )}
               </div>
+            </div>
+          )}
+
+          {!file && (
+            <div className="mb-6 p-4 bg-primary/5 border border-primary/20 rounded-lg flex items-start gap-3">
+              <Lock size={18} className="text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-foreground font-semibold text-sm">Your file is protected</p>
+                <p className="text-muted-foreground text-xs mt-1">
+                  All files are encrypted with AES-256 and can be shared with time-limited links
+                </p>
+              </div>
+            </div>
+          )}
+
+          <motion.button
+            onClick={uploadFile}
+            disabled={!file || uploading || success || checkingKey}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-3 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 disabled:bg-muted transition-all shadow-lg shadow-primary/20 disabled:shadow-none flex items-center justify-center gap-2"
+          >
+            {uploading ? (
+              <>
+                <Loader size={20} className="animate-spin" />
+                Uploading...
+              </>
+            ) : success ? (
+              <>
+                <CheckCircle size={20} />
+                Upload Complete
+              </>
+            ) : file ? (
+              <>
+                <Upload size={20} />
+                Upload File
+              </>
+            ) : (
+              <>
+                <Upload size={20} />
+                Select a File First
+              </>
+            )}
+          </motion.button>
+
+          <div className="mt-6 pt-6 border-t border-border">
+            <p className="text-muted-foreground text-xs font-semibold mb-2">Supported formats:</p>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {["PDF", "DOC", "XLS", "JPG", "PNG", "TXT", "ZIP", "GIF", "DOCX"].map((format) => (
+                <div key={format} className="bg-muted/40 rounded px-2 py-1 text-center">
+                  <p className="text-muted-foreground text-xs font-medium">{format}</p>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="mt-6 text-center text-slate-400 text-sm">
-          <p>🔐 Military-grade AES-256 encryption • Zero-knowledge storage</p>
+        {/* Progress timeline sidebar */}
+        <div className="rounded-2xl border border-border bg-card p-6 h-fit lg:sticky lg:top-24">
+          <h3 className="text-sm font-semibold text-foreground mb-5">Security Pipeline</h3>
+          {timelineSteps.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Select a file and start the upload to see live progress here.</p>
+          ) : (
+            <ProgressTimeline steps={timelineSteps} />
+          )}
         </div>
       </div>
 
@@ -915,32 +879,29 @@ export default function UploadFile() {
           the actual matched values. */}
       {showDlpApprovalModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-          <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-6">
+          <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 text-orange-300 ring-1 ring-orange-500/30">
+              <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-warning/10 text-warning ring-1 ring-warning/30">
                 <Eye size={20} />
               </div>
-              <h2 className="text-lg font-bold text-white">Sensitive data detected</h2>
+              <h2 className="text-lg font-bold text-foreground">Sensitive data detected</h2>
             </div>
-            <p className="text-slate-300 text-sm mb-3">
-              This file appears to contain: <span className="font-semibold text-orange-300">{(dlpResult?.matchedPatterns || []).join(", ") || "sensitive information"}</span>.
+            <p className="text-foreground/90 text-sm mb-3">
+              This file appears to contain:{" "}
+              <span className="font-semibold text-warning">{(dlpResult?.matchedPatterns || []).join(", ") || "sensitive information"}</span>.
               Do you want to continue uploading it anyway?
             </p>
-            <p className="text-slate-500 text-xs mb-5">
+            <p className="text-muted-foreground text-xs mb-5">
               Your choice is recorded in the DLP Center audit log. The file will still be encrypted end-to-end before it leaves your browser.
             </p>
             <div className="flex gap-3 justify-end">
-              <button
-                onClick={cancelDlpApproval}
-                disabled={dlpApproving}
-                className="px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg disabled:opacity-50"
-              >
+              <button type="button" onClick={cancelDlpApproval} disabled={dlpApproving} className="px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-white/5 rounded-lg disabled:opacity-50">
                 Cancel
               </button>
               <button
                 onClick={() => pendingUploadRef.current?.()}
                 disabled={dlpApproving}
-                className="px-4 py-2 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 text-sm font-semibold text-white bg-warning hover:bg-warning/90 rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
                 {dlpApproving && <Loader size={14} className="animate-spin" />}
                 Continue Anyway
