@@ -25,7 +25,15 @@ export const TYPE_META = {
   threat_found: { siemType: "THREAT_FOUND", severity: "HIGH", category: "THREAT", label: "Threat Found" },
   signature_verified: { siemType: "SIGNATURE_VERIFIED", severity: "INFO", category: "SIGNATURE", label: "Signature Verified" },
   signature_invalid: { siemType: "SIGNATURE_INVALID", severity: "CRITICAL", category: "SIGNATURE", label: "Signature Invalid" },
-  policy_violation: { siemType: "POLICY_VIOLATION", severity: "MEDIUM", category: "ZERO_TRUST", label: "Policy Violation" }
+  policy_violation: { siemType: "POLICY_VIOLATION", severity: "MEDIUM", category: "ZERO_TRUST", label: "Policy Violation" },
+
+  // --- New types (Phase 7: Threat Intelligence) ---
+  ioc_match: { siemType: "IOC_MATCH", severity: "HIGH", category: "THREAT", label: "IOC Match" },
+  ioc_lookup: { siemType: "IOC_LOOKUP", severity: "INFO", category: "THREAT", label: "IOC Lookup" },
+  threat_intel_match: { siemType: "THREAT_INTEL_MATCH", severity: "CRITICAL", category: "THREAT", label: "Threat Intel Match" },
+  mitre_mapping: { siemType: "MITRE_MAPPING", severity: "MEDIUM", category: "THREAT", label: "MITRE Technique Mapped" },
+  yara_match: { siemType: "YARA_MATCH", severity: "HIGH", category: "THREAT", label: "YARA Rule Match" },
+  provider_error: { siemType: "PROVIDER_ERROR", severity: "LOW", category: "THREAT", label: "Threat Intel Provider Error" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];

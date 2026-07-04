@@ -57,6 +57,15 @@ const fileSchema = new mongoose.Schema({
   dlpRisk: { type: String, enum: ["None", "Low", "Medium", "High", "Critical"], default: null },
   dlpDecision: { type: String, enum: ["allow", "warn", "require_approval", "block"], default: null },
 
+  // Phase 7: Threat Intelligence enrichment result, mirrored from the ThreatIntelScan doc
+  // referenced by threatIntelScanId once background enrichment completes (see
+  // backend/services/threatIntel/threatIntelIntegration.js). Absent/defaults on every file
+  // uploaded before Phase 7 or while enrichment is still running - never blocks access.
+  threatIntelScanId: { type: mongoose.Schema.Types.ObjectId, ref: "ThreatIntelScan", default: null },
+  threatScore: { type: Number, default: 0 },
+  threatConfidence: { type: Number, default: 0 },
+  iocMatchCount: { type: Number, default: 0 },
+
   // Phase 3: Zero Trust access policy. Every field is optional/empty by default, so files with
   // no policy configured behave exactly as before (backend/services/policyEngine.js treats an
   // all-empty policy as "no restrictions, allow"). Evaluated on every download attempt.

@@ -9,6 +9,7 @@ import {
   BarChart3,
   Radar,
   Settings,
+  Crosshair,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ export const navItems: NavItem[] = [
   { label: "Upload", href: "/upload", icon: UploadCloud },
   { label: "Threat Center", href: "/threats", icon: ScanSearch },
   { label: "DLP Center", href: "/dlp", icon: Eye },
+  { label: "Threat Intelligence", href: "/threat-intelligence", icon: Crosshair },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
   { label: "Security Operations", href: "/soc", icon: Radar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },

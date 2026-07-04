@@ -36,6 +36,14 @@ Every event emitted by Phases 1-5 above — logins, uploads, downloads, quaranti
 
 **What the correlation engine does not do**: it is detection-only and purely observational. It never blocks, delays, alters, or auto-remediates a request — an `Incident` is a grouped, labeled view over events that already happened, not an enforcement mechanism. No cryptography, Zero Trust policy evaluation, malware scanning, or DLP detection logic was modified to build this phase; the SIEM only consumes their existing outputs.
 
+### Threat Intelligence & IOC Intelligence (Phase 7)
+
+Every uploaded file's hash is cross-referenced against a local IOC (Indicator of Compromise) database and, if configured, external reputation providers (VirusTotal, AbuseIPDB, AlienVault OTX, URLHaus, OpenPhish, CIRCL) — all optional and independently disableable, with enrichment always degrading to "no external data" rather than blocking or failing an upload. Matches are further mapped to MITRE ATT&CK techniques (a curated subset, not the full corpus) and checked against stored YARA-style detection rules (`backend/services/threatIntel/yaraEngine.js` — a documented, simplified `strings:`/`condition:` matcher, not a native `libyara` binding, to avoid a compiled-binary dependency). Results are surfaced on the `/threat-intelligence` dashboard and fed into the same SIEM taxonomy as every other phase (`IOC_MATCH`, `THREAT_INTEL_MATCH`, `MITRE_MAPPING`, `YARA_MATCH`, `PROVIDER_ERROR`).
+
+**Zero-knowledge boundary respected**: by the time enrichment runs (after upload completes), the server no longer holds the file's plaintext — automatic enrichment only ever operates on the SHA-256/SHA-1/MD5 hashes already computed during the Phase 4 pre-encryption scan. The one place raw text is intentionally examined for embedded URLs/domains/emails/IPs is `POST /api/threat-intel/scan-text`, a deliberate, explicit, auth-only endpoint mirroring the same "documented scoped exception" pattern Phase 4/5 already use for pre-encryption scanning — it is never invoked against DLP's masked findings, which intentionally never contain raw matched values.
+
+**What Phase 7 does not do**: like the SIEM correlation engine, it is detection/enrichment-only — a critical IOC/YARA/MITRE match never blocks an upload or a download by itself (that remains Phase 3's Zero Trust policy engine and Phase 4/5's quarantine/block decisions). No existing model, route, or controller behavior was changed; every integration point is additive.
+
 ---
 
 ## Supported Algorithms

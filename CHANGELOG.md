@@ -6,6 +6,34 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 7 — Threat Intelligence & IOC Intelligence
+**2026-07-04**
+
+Cross-references every upload against Indicators of Compromise (IOCs), MITRE ATT&CK techniques, and YARA-style detection rules, sitting as an enrichment layer between malware/DLP scanning and SIEM event emission - without modifying any existing detection, cryptography, or Zero Trust logic.
+
+### Added
+- `backend/models/IOC.js` - the local IOC database (IP/domain/URL/SHA256/SHA1/MD5/email/filename/certificate-fingerprint), each record carrying confidence, severity, source, tags, and references
+- `backend/models/YaraRule.js`, `backend/models/ThreatIntelScan.js` - stored detection rules and per-file enrichment results
+- `backend/services/threatIntel/providers/` - six provider modules (VirusTotal, AbuseIPDB, AlienVault OTX, URLHaus, OpenPhish, CIRCL), each gracefully skipping (never throwing) when its API key is unset, registered in a `PROVIDERS` array mirroring `dlp/detectors/index.js`'s pattern
+- `backend/services/threatIntel/iocLookupService.js` - merges local IOC hits with provider results into one normalized confidence/severity verdict
+- `backend/services/threatIntel/mitreMapping.js` - a curated MITRE ATT&CK technique subset with keyword-based mapping
+- `backend/services/threatIntel/yaraEngine.js` - a documented, simplified YARA-like rule matcher (`strings:`/`condition:` subset) plus `ensureSeedRules()`, called once at server startup
+- `backend/services/threatIntel/extractors.js` - dependency-free URL/domain/email/IPv4 extraction from explicitly-submitted plaintext
+- `backend/services/threatIntel/threatIntelEngine.js` (`runThreatIntelScan`) - the orchestrator tying hash lookups, YARA matching, and MITRE mapping into one result
+- `backend/services/threatIntel/threatIntelIntegration.js` (`runThreatIntelScanAsync`) - fire-and-forget hook called from `file.controller.js` right after upload, operating on already-computed file hashes (never re-reading plaintext, respecting the zero-knowledge boundary)
+- Threat Intelligence REST API (`/api/threat-intel/scan-text`, `/scans`, `/stats`, `/search`, `/iocs`, `/mitre`, `/yara-rules`, `/export`)
+- Threat Intelligence dashboard (`frontend/app/threat-intelligence/page.tsx`) - IOC summary stat cards, global IOC/MITRE/YARA search, Top IOC Types and Confidence Distribution charts, a Threat Timeline, MITRE technique badges, YARA match list, Threat Feed table, and CSV/JSON export
+- `backend/tests/threatIntel.test.js` - unit tests for indicator extraction, MITRE mapping, YARA rule parsing/condition evaluation, and every provider's graceful-skip behavior
+
+### Changed
+- `backend/services/siem/eventCatalog.js`'s `TYPE_META` extended (additive only) with `ioc_match`, `ioc_lookup`, `threat_intel_match`, `mitre_mapping`, `yara_match`, `provider_error`
+- `backend/models/File.js` extended with optional `threatIntelScanId`/`threatScore`/`threatConfidence`/`iocMatchCount` fields, all defaulting to values that leave pre-Phase-7 files unaffected
+- `backend/controllers/file.controller.js`'s upload handler now fires `runThreatIntelScanAsync()` after linking the malware/DLP scans - fire-and-forget, never blocks or fails the upload response
+- `frontend/app/threats/page.tsx` gained a link card to the new Threat Intelligence dashboard with a live MITRE technique count
+- Added "Threat Intelligence" to the main navigation (`frontend/components/shell/navItems.ts`)
+
+---
+
 ## Phase 6 — Centralized SIEM Platform
 **2026-07-03**
 

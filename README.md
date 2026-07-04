@@ -765,6 +765,29 @@ Filtering (date, severity, category, device, country, file, incident) and a debo
 
 ---
 
+## 🎯 Phase 7: Threat Intelligence & IOC Intelligence
+
+Phase 4 checks whether a file itself looks malicious (magic bytes, ClamAV, VirusTotal). Phase 7 asks a broader question: "does anything about this upload match something already known to be bad?" - cross-referencing file hashes (and, for on-demand text scans, embedded URLs/domains/emails/IPs) against Indicators of Compromise (IOCs), MITRE ATT&CK techniques, and YARA-style detection rules. It sits as an enrichment layer immediately after malware scanning + DLP and before the resulting SIEM event is emitted.
+
+**Architecture** (`backend/services/threatIntel/`, mirroring the modular style of Phase 5's `services/dlp/` and Phase 6's `services/siem/`):
+
+- **IOC database** (`models/IOC.js`) - the fast, offline-first lookup path. Types: IP, domain, URL, SHA256/SHA1/MD5, email, filename, certificate fingerprint. Each record carries `confidence` (0-100), `severity`, `source`, tags, and references.
+- **Provider architecture** (`services/threatIntel/providers/`) - one file per external source (VirusTotal, AbuseIPDB, AlienVault OTX, URLHaus, OpenPhish, CIRCL), each exporting a uniform `lookup(type, value)` returning `{status, confidence, severity, threatNames}`. Every provider **gracefully skips** (`status: "skipped"`) if its API key env var is unset, and never throws - a `PROVIDERS` registry (`providers/index.js`) lets `iocLookupService.js` iterate them generically, exactly like `dlp/detectors/index.js`'s `DETECTORS` array. A provider erroring never breaks enrichment or blocks an upload.
+- **IOC lookup engine** (`iocLookupService.js`) - checks the local IOC collection first, then fans out to applicable providers in parallel (`Promise.allSettled`), merging every result into one normalized confidence/severity verdict.
+- **MITRE ATT&CK mapping** (`mitreMapping.js`) - a curated ~15-technique subset (not the full ATT&CK corpus) relevant to file-borne threats, keyed by keyword hints so IOC tags, YARA rule names, and descriptions can all drive it.
+- **YARA rule support** (`yaraEngine.js`, `models/YaraRule.js`) - **note:** this is a simplified, documented rule matcher (a `strings:`/`condition:` subset supporting plain-text and regex patterns plus `any`/`all`/`N of them` conditions), not a native `libyara` binding, since compiled native bindings aren't guaranteed to install across every deployment target. Rules are stored in Mongo so they can be managed without a redeploy; a handful are auto-seeded on first boot (`ensureSeedRules()` in `server.js`).
+- **Orchestrator** (`threatIntelEngine.js`) - ties hashes + (optionally) extracted text into IOC lookups, YARA matching, and MITRE mapping, returning one `threatScore`/`threatConfidence`/`severity` verdict.
+
+**Upload pipeline integration**: by the time a file finishes uploading, the server no longer holds plaintext (zero-knowledge encryption already happened client-side) - so automatic enrichment in `backend/controllers/file.controller.js` runs against the file hashes already computed by the Phase 4 malware scan (`ThreatScan.hashes`), fired-and-forgotten via `threatIntelIntegration.js`'s `runThreatIntelScanAsync()`, the same non-blocking pattern every other post-upload side effect in this codebase already uses. For explicit indicator extraction from raw text/URLs (which requires actual plaintext), `POST /api/threat-intel/scan-text` mirrors Phase 4/5's "deliberate, scoped exception" pattern for pre-encryption scanning.
+
+**SIEM integration**: six new event types were added additively to `eventCatalog.js`'s `TYPE_META` - `IOC_MATCH`, `IOC_LOOKUP`, `THREAT_INTEL_MATCH`, `MITRE_MAPPING`, `YARA_MATCH`, and `PROVIDER_ERROR` - all logged through the existing `logSecurityEvent()` with no changes to `siemLogger.js` itself.
+
+**Dashboard**: `/threat-intelligence` (`frontend/app/threat-intelligence/page.tsx`) - IOC summary stat cards, a Threat Feed table with global IOC search (hash/IP/domain/URL/filename/email/MITRE ID/YARA rule name), Top IOC Types and Confidence Distribution charts, a Threat Timeline, MITRE ATT&CK technique badges, YARA match list, and CSV/JSON export. The Threat Center page (`/threats`) links to it and surfaces a live MITRE technique count.
+
+**Backward compatibility**: every new field (`File.threatIntelScanId/threatScore/threatConfidence/iocMatchCount`) is additive with safe defaults - files uploaded before Phase 7 are completely unaffected, and enrichment failures never block or fail an upload.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -990,6 +1013,19 @@ docker-compose down
 | `GET` | `/stats` | Severity/category/type breakdowns + 30-day timeline | Yes |
 | `GET` | `/catalog` | The event type → severity/category/label mapping, for frontend legends | Yes |
 | `POST` | `/events/signature` | Report a client-side signature verification outcome (`verified`/`invalid` only) | Yes |
+
+### Threat Intelligence Routes (`/api/threat-intel`, Phase 7)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `POST` | `/scan-text` | On-demand IOC extraction/lookup over explicitly-submitted text and/or hashes - see [Phase 7](#-phase-7-threat-intelligence--ioc-intelligence) | Yes |
+| `GET` | `/scans` | Your threat intelligence enrichment history, newest first | Yes |
+| `GET` | `/stats` | IOC type/confidence/source/MITRE/YARA breakdowns for the dashboard | Yes |
+| `GET` | `/search` | Global IOC search (hash, IP, domain, URL, filename, email, MITRE technique, YARA rule) | Yes |
+| `GET` | `/iocs` | Browse the local IOC database, filterable by type/severity/status | Yes |
+| `GET` | `/mitre` | The curated MITRE ATT&CK technique catalog | Yes |
+| `GET` | `/yara-rules` | Stored YARA rules | Yes |
+| `GET` | `/export` | CSV/JSON export of your threat intelligence scans | Yes |
 
 **Upload Request:**
 ```json

@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { ShieldAlert, Bug, Ban, ScanSearch, AlertCircle, Fingerprint, RotateCcw, Radar } from "lucide-react";
+import Link from "next/link";
+import { ShieldAlert, Bug, Ban, ScanSearch, AlertCircle, Fingerprint, RotateCcw, Radar, Crosshair, ArrowUpRight } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -62,6 +63,7 @@ export default function ThreatCenterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [mitreCount, setMitreCount] = useState<number | null>(null);
 
   const fetchAll = useCallback(
     async (token: string) => {
@@ -96,6 +98,12 @@ export default function ThreatCenterPage() {
       return;
     }
     fetchAll(token);
+    // Phase 7: MITRE ATT&CK technique count surfaced from Threat Intelligence enrichment -
+    // best-effort, never blocks the Threat Center page if unavailable.
+    api
+      .get<{ byMitreTechnique: Record<string, number> }>("/threat-intel/stats", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => setMitreCount(Object.keys(res.data.byMitreTechnique || {}).length))
+      .catch(() => setMitreCount(null));
   }, [fetchAll, router]);
 
   const handleRelease = async (fileId: string) => {
@@ -315,6 +323,24 @@ export default function ThreatCenterPage() {
               </ResponsiveContainer>
             </div>
           )}
+
+          <Link
+            href="/threat-intelligence"
+            className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-5 hover:border-primary/40 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 text-purple-300 bg-purple-500/10 ring-purple-500/25">
+                <Crosshair size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Threat Intelligence &amp; MITRE ATT&amp;CK Mapping</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {mitreCount !== null ? `${mitreCount} technique(s) mapped from IOC/YARA enrichment` : "IOC lookups, MITRE mapping, and YARA matches"} — view full dashboard
+                </p>
+              </div>
+            </div>
+            <ArrowUpRight size={18} className="text-muted-foreground shrink-0" />
+          </Link>
 
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">

@@ -19,6 +19,7 @@ import { resolveCountry } from "../utils/geoLookup.js";
 import { evaluateDownloadPolicy, hasActivePolicy } from "../services/policyEngine.js";
 import { runThreatScan } from "../services/threatScanService.js";
 import { runDLPScan } from "../services/dlp/dlpEngine.js";
+import { runThreatIntelScanAsync } from "../services/threatIntel/threatIntelIntegration.js";
 
 /* Phase 4: links a completed ThreatScan doc to the File it was ultimately used for, marking it
    consumed so the same clean scan result can't be replayed across multiple uploads. Returns the
@@ -360,6 +361,12 @@ const uploadFileV2 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
 
   await linkThreatScan(scan._id, file._id);
   await linkDlpScan(dlpScan._id, file._id);
+
+  // Phase 7: threat intelligence enrichment (IOC/MITRE/YARA) - best-effort, fire-and-forget,
+  // never blocks or fails the upload response. See services/threatIntel/threatIntelIntegration.js.
+  runThreatIntelScanAsync(scan, dlpScan, file, req.user.id).catch((e) =>
+    console.error("Failed to run threat intelligence enrichment:", e)
+  );
 
   if (scan.quarantined) {
     logSecurityEvent({
