@@ -31,7 +31,12 @@ const securityEventSchema = new mongoose.Schema({
       "compliance_scan", "control_passed", "control_failed", "policy_updated",
       "compliance_policy_violation", "report_generated", "evidence_collected",
       // Phase 10 continuation: overall-run pass/fail verdicts + framework config changes
-      "compliance_failed", "compliance_passed", "framework_updated"
+      "compliance_failed", "compliance_passed", "framework_updated",
+      // Phase 11: CSPM / Attack Surface Management
+      "asset_discovered", "asset_updated", "configuration_scan", "configuration_failure",
+      "public_exposure", "weak_tls", "certificate_expiring", "certificate_expired",
+      "missing_security_headers", "cloud_risk_updated", "security_score_updated",
+      "cloud_ioc_match"
     ]
   },
   message: String,
@@ -71,13 +76,17 @@ const securityEventSchema = new mongoose.Schema({
       "COMPLIANCE_SCAN", "CONTROL_PASSED", "CONTROL_FAILED", "POLICY_UPDATED",
       "REPORT_GENERATED", "EVIDENCE_COLLECTED",
       // Phase 10 continuation
-      "COMPLIANCE_FAILED", "COMPLIANCE_PASSED", "FRAMEWORK_UPDATED"
+      "COMPLIANCE_FAILED", "COMPLIANCE_PASSED", "FRAMEWORK_UPDATED",
+      // Phase 11: CSPM / Attack Surface Management
+      "ASSET_DISCOVERED", "ASSET_UPDATED", "CONFIGURATION_SCAN", "CONFIGURATION_FAILURE",
+      "PUBLIC_EXPOSURE", "WEAK_TLS", "CERTIFICATE_EXPIRING", "CERTIFICATE_EXPIRED",
+      "MISSING_SECURITY_HEADERS", "CLOUD_RISK_UPDATED", "SECURITY_SCORE_UPDATED", "CLOUD_IOC_MATCH"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

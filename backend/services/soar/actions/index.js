@@ -22,6 +22,8 @@ import requireMfaStepUp from "./requireMfaStepUp.js";
 import generateComplianceReport from "./generateComplianceReport.js";
 import assignComplianceOwner from "./assignComplianceOwner.js";
 import rerunComplianceAssessment from "./rerunComplianceAssessment.js";
+import rerunCloudScan from "./rerunCloudScan.js";
+import generateCloudReport from "./generateCloudReport.js";
 
 export const ACTION_HANDLERS = {
   quarantineFile,
@@ -40,7 +42,9 @@ export const ACTION_HANDLERS = {
   requireMfaStepUp,
   generateComplianceReport,
   assignComplianceOwner,
-  rerunComplianceAssessment
+  rerunComplianceAssessment,
+  rerunCloudScan,
+  generateCloudReport
 };
 
 export const ACTION_TYPES = Object.keys(ACTION_HANDLERS);

@@ -229,6 +229,35 @@ If `VIRUSTOTAL_API_KEY` is unset, `lookupHashOnVirusTotal()` returns immediately
 
 ---
 
+## 6. Cloud Security Posture Management (Phase 11)
+
+CSPM/ASM scanning runs automatically (a daily `node-cron` job at 04:00, plus a one-off scan ~10s after every server startup) — no configuration is required to get baseline coverage of SecureShare's own deployment.
+
+### Optional configuration
+
+Set in `backend/.env` if you want certificate monitoring against your real production domain(s):
+
+```env
+# Base URL the attack-surface scanner self-probes - defaults to http://localhost:${PORT}
+APP_BASE_URL=https://your-backend-domain.example.com
+
+# Comma-separated HTTPS domains to monitor for certificate expiry/weak TLS, beyond WEBAUTHN_ORIGIN
+CLOUD_MONITORED_DOMAINS=your-frontend-domain.example.com,your-backend-domain.example.com
+```
+
+### Triggering a scan from your deploy pipeline
+
+There is no reliable way for a long-running Node process to detect "a deploy just happened" to itself, so config-change/deployment triggers (PART 10 of the Phase 11 spec) are satisfied via the manual scan endpoint instead of inferred automatically:
+
+```bash
+curl -X POST https://your-backend-domain.example.com/api/cloud/scan \
+  -H "Authorization: Bearer <admin_jwt>"
+```
+
+Call this as the last step of your CI/CD pipeline (after the new instance is serving traffic) to pick up any configuration changes immediately rather than waiting for the next daily scan.
+
+---
+
 ## Post-Deployment Checklist
 
 - [ ] Frontend loads and `NEXT_PUBLIC_API` correctly points at the deployed backend
@@ -236,6 +265,7 @@ If `VIRUSTOTAL_API_KEY` is unset, `lookupHashOnVirusTotal()` returns immediately
 - [ ] Upload + download round-trips correctly (confirms Cloudinary credentials)
 - [ ] `GET /api/health` returns `{ status: "ok" }`
 - [ ] `clamav.status` is `"clean"` (not `"unavailable"`) on a test upload, if ClamAV was deployed
+- [ ] `GET /api/cloud/dashboard` (with an admin JWT) returns a populated overall score after the startup scan runs
 - [ ] `virusTotal.status` is not `"error"` on a test upload, if a VirusTotal key was configured
 - [ ] MongoDB Atlas Network Access is restricted to known IPs (not left at `0.0.0.0/0`) for production
 - [ ] `JWT_SECRET` and the RSA keypair are unique to this deployment, not copied from a dev `.env`

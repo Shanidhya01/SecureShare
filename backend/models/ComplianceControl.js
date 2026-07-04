@@ -25,7 +25,9 @@ const complianceControlSchema = new mongoose.Schema(
         // Phase 10 continuation: password policy, identity governance, device trust, adaptive
         // auth, digital signatures, and file integrity - see controlEvaluators.js.
         "passwordPolicyEvaluator", "identityEvaluator", "deviceTrustEvaluator", "adaptiveAuthEvaluator",
-        "digitalSignatureEvaluator", "fileIntegrityEvaluator"
+        "digitalSignatureEvaluator", "fileIntegrityEvaluator",
+        // Phase 11 (CSPM/ASM): cloud security posture findings feed into compliance scoring.
+        "cloudSecurityEvaluator"
       ]
     },
     recommendation: String,

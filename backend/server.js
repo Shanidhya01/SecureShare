@@ -20,11 +20,13 @@ import passkeyRoutes, { passkeyLoginRouter } from "./routes/passkey.routes.js";
 import iamRoutes from "./routes/iam.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import complianceRoutes from "./routes/compliance.routes.js";
+import cloudRoutes from "./routes/cloud.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
 import { ensureSeedPlaybooks } from "./services/soar/seedPlaybooks.js";
 import { ensureSeedFrameworks } from "./services/compliance/seedFrameworks.js";
 import { runAssessment } from "./services/compliance/complianceEngine.js";
+import { runCloudScan } from "./services/cloud/cloudScanOrchestrator.js";
 import User from "./models/User.js";
 
 dotenv.config();
@@ -46,6 +48,8 @@ if (!process.env.MONGO_URI) {
       ensureSeedPlaybooks().catch((err) => console.error("Failed to seed SOAR playbooks:", err.message));
       ensureSeedFrameworks().catch((err) => console.error("Failed to seed compliance frameworks:", err.message));
       scheduleDailyComplianceScan();
+      scheduleDailyCloudScan();
+      runStartupCloudScan();
     })
     .catch((err) => console.error("MongoDB connection error:", err.message));
 }
@@ -70,6 +74,7 @@ app.use("/api/passkeys", passkeyRoutes);
 app.use("/api/auth/passkey", passkeyLoginRouter);
 app.use("/api/iam", iamRoutes);
 app.use("/api/compliance", complianceRoutes);
+app.use("/api/cloud", cloudRoutes);
 app.use("/api", ipRoutes);
 
 // Phase 10 (Compliance & Governance): continuous compliance - re-run the full assessment once a
@@ -87,6 +92,36 @@ function scheduleDailyComplianceScan() {
       console.error("Scheduled compliance scan failed:", err.message);
     }
   });
+}
+
+// Phase 11 (CSPM/ASM): continuous posture scanning - one daily scan (offset from Compliance's
+// 03:00 slot) plus a one-off scan ~10s after every server startup/deployment, both attributed to
+// the first admin account exactly like scheduleDailyComplianceScan(). Config/policy-change and
+// "on deploy" triggers (PART 10) are satisfied by the manual POST /api/cloud/scan endpoint, which
+// a deploy pipeline or the policy-update handlers can call - there's no reliable way to detect
+// "a deploy just happened" from inside the already-running process it deployed.
+function scheduleDailyCloudScan() {
+  cron.schedule("0 4 * * *", async () => {
+    try {
+      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      if (!admin) return;
+      await runCloudScan({ owner: admin._id });
+    } catch (err) {
+      console.error("Scheduled cloud scan failed:", err.message);
+    }
+  });
+}
+
+function runStartupCloudScan() {
+  setTimeout(async () => {
+    try {
+      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      if (!admin) return;
+      await runCloudScan({ owner: admin._id });
+    } catch (err) {
+      console.error("Startup cloud scan failed:", err.message);
+    }
+  }, 10000);
 }
 
 // Root and health endpoints

@@ -886,6 +886,34 @@ Every prior phase implements a security control; Phase 10 is the governance laye
 
 ---
 
+## ☁️ Phase 11: Cloud Security Posture Management & Attack Surface Management
+
+SecureShare has no multi-cloud footprint to enumerate, so Phase 11's "cloud" scanning means continuous self-discovery and self-scanning of SecureShare's own Express/Next.js deployment - the server, database, every registered API route group, the frontend origin, file storage, and container/reverse-proxy config already in the repo - rather than calling out to AWS/GCP/Azure. Nothing from Phases 1-10 was rewritten; every finding flows through the existing SIEM/SOAR/Compliance pipelines.
+
+**Asset inventory** (`backend/models/Asset.js`, `backend/services/cloud/assetDiscovery.js`): upserts one `Asset` doc per server/database/API route group/domain/storage/container, keyed by name+type. Route groups are discovered by statically parsing `backend/routes/*.routes.js` (no live `app` object needed, no circular imports); Docker/Compose assets are discovered from `backend/Dockerfile`/`docker-compose.yml` if present. Every new/refreshed asset logs `asset_discovered`/`asset_updated`.
+
+**Configuration scanner** (`backend/services/cloud/configScanner.js`): ~20 pure `(context) => pass/fail` rules (missing HTTPS enforcement, HSTS, CSP, X-Frame-Options, Permissions-Policy, helmet, wide-open CORS, directory listing, rate limiting, compression, debug mode, cookie flags, JWT secret strength, exposed Swagger/admin APIs, unbounded upload size) - mirrors `controlEvaluators.js`'s pure-function testability. Findings are persisted to the new unified `CloudFinding` model and auto-resolved once the underlying condition clears on a later scan.
+
+**Certificate monitoring** (`backend/services/cloud/certificateMonitor.js`): uses Node's built-in `tls` module (no new dependency) to fetch each monitored domain's peer certificate, tracks issuer/validity/algorithm/TLS version/cipher in the new `Certificate` model, and alerts at the 30/15/7-day and expired thresholds - `lastNotifiedTier` dedupes repeat alerts until the cert is renewed.
+
+**Attack Surface Management** (`backend/services/cloud/attackSurfaceScanner.js`): self-probes SecureShare's own base URL (never third-party hosts) for `robots.txt`, `security.txt`, `.well-known/*`, `/api-docs`, `/swagger`, `/admin`, `/metrics`, `/debug`, `.env`, and `.git/config`, using the runtime's built-in global `fetch`.
+
+**Threat intelligence correlation** (`backend/services/cloud/threatIntelCorrelation.js`): reuses the existing `services/threatIntel/iocLookupService.js` as-is to check discovered domain assets against known-malicious IOC data, exactly like `threatIntelIntegration.js` already does for uploaded files.
+
+**Security Score Engine** (`backend/services/cloud/scoreEngine.js`): computes Asset/Configuration/Exposure/Certificate/Identity/Compliance component scores (the severity-weighting approach mirrors `services/compliance/riskScoring.js`) plus a weighted overall score, persisted per run to the new `SecurityScoreSnapshot` model for the dashboard's trend chart - identical reasoning to why `ComplianceAssessment` history backs the Compliance trend chart.
+
+**Compliance integration, for free**: a new `cloudSecurityEvaluator` (`controlEvaluators.js`) fails/scores based on open CRITICAL/HIGH `CloudFinding`s, seeded as one control under each of ISO 27001, SOC 2, GDPR, PCI DSS, NIST CSF, and OWASP ASVS - so open cloud findings automatically lower those frameworks' compliance scores with no parallel scoring system.
+
+**SOAR integration, for free**: new `PUBLIC_EXPOSURE_CRITICAL`/`CERTIFICATE_EXPIRED`/`CLOUD_SCORE_DROP` triggers drive a "Cloud Exposure Response" playbook (raise incident → notify admin → re-run cloud scan → generate report), reusing `raiseIncident`/`notifyAdmin` and two new actions (`rerunCloudScan`, `generateCloudReport`) - `logSecurityEvent()` already re-enters the SOAR engine for every new event type with zero extra plumbing.
+
+**Cloud Security dashboard**: `/cloud-security` (plus `/cloud-security/assets`, `/findings`, `/certificates`, `/reports`, and per-asset `/assets/:id` detail pages) - overall + 6 component scores, asset distribution, exposure breakdown, findings by severity, certificate status, 90-day score history, high-risk assets, recent scans, and recommendations, via Recharts. Admin-only end to end (`requireAdmin` on every `/api/cloud/*` route), matching Compliance/SOAR's gating.
+
+**Continuous scanning**: a daily `node-cron` job (04:00, offset from Compliance's 03:00) plus a one-off scan ~10s after every server startup, both via `runCloudScan()` (`backend/services/cloud/cloudScanOrchestrator.js`). Compliance policy updates also trigger an immediate fire-and-forget re-scan. CI/CD "on deploy" triggers use the manual `POST /api/cloud/scan` endpoint - there's no reliable way to detect "a deploy just happened" from inside the process that was just deployed.
+
+**Exports**: CSV/JSON/PDF via `backend/services/cloud/cloudReportGenerator.js`, mirroring `reportGenerator.js`'s exact conventions (manual-string CSV/JSON, `pdfkit` for PDF - no new dependency).
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -1207,6 +1235,24 @@ All routes below are admin-only (`requireAdmin`).
 | `GET` | `/reports` | List generated compliance report records | Admin |
 | `POST` \| `GET` | `/reports` \| `/report` \| `/reports/export?format=csv\|json\|pdf` | Run a fresh assessment and stream a report in the requested format | Admin |
 | `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Same report generation, via a dedicated path per format | Admin |
+
+### Cloud Security Routes (`/api/cloud`, Phase 11)
+
+All routes below are admin-only (`requireAdmin`).
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/dashboard` | Overall + 6 component scores, asset/finding breakdowns, certificate summary, recent scans, trend, recommendations | Admin |
+| `GET` | `/assets` | List discovered assets, optionally filtered by `type`/`criticality`/`status` | Admin |
+| `GET` | `/assets/:id` | Single asset with its findings, related security events, and related incidents | Admin |
+| `GET` | `/findings` | List findings, optionally filtered by `category`/`severity`/`status` (defaults to open) | Admin |
+| `POST` | `/findings/:id/acknowledge` | Mark a finding as acknowledged | Admin |
+| `POST` | `/findings/:id/resolve` | Mark a finding as resolved | Admin |
+| `GET` | `/certificates` | List monitored TLS certificates | Admin |
+| `GET` | `/score` | Latest security score snapshot | Admin |
+| `GET` | `/history` | Score history for the trend chart (`?days=`) | Admin |
+| `POST` | `/scan` | Run a full CSPM/ASM scan (discovery → config scan → certs → attack surface → threat intel → score) | Admin |
+| `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Export the current inventory/findings/certificates as a report | Admin |
 
 **Upload Request:**
 ```json

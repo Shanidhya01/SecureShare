@@ -16,6 +16,7 @@ import {
 } from "../services/compliance/policyEvaluator.js";
 import { buildCsv, buildJson, buildPdf } from "../services/compliance/reportGenerator.js";
 import { logSecurityEvent } from "../services/siem/siemLogger.js";
+import { runCloudScan } from "../services/cloud/cloudScanOrchestrator.js";
 
 /* ============================== FRAMEWORKS ============================== */
 
@@ -144,6 +145,10 @@ export const updatePolicy = async (req, res) => {
     message: `Compliance policy "${name}" updated to version ${policy.version}`,
     metadata: { name, value, version: policy.version }
   });
+
+  // Phase 11 (CSPM/ASM) PART 10: policy changes are one of the scan triggers - fire-and-forget so
+  // this response never waits on a full cloud scan.
+  runCloudScan({ owner: req.user.id }).catch((err) => console.error("Cloud scan after policy update failed:", err.message));
 
   res.json(policy);
 };

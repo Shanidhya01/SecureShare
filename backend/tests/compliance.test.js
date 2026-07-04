@@ -27,6 +27,7 @@ import {
   adaptiveAuthEvaluator,
   digitalSignatureEvaluator,
   fileIntegrityEvaluator,
+  cloudSecurityEvaluator,
   EVALUATORS
 } from "../services/compliance/controlEvaluators.js";
 import { evaluatePolicyViolations, validatePolicyValue, POLICY_DEFAULTS } from "../services/compliance/policyEvaluator.js";
@@ -117,13 +118,25 @@ test("soarAutomationEvaluator: FAIL when no automation rules are enabled", () =>
   assert.equal(result.status, "FAIL");
 });
 
-test("EVALUATORS registry exposes exactly the 17 documented evaluator keys", () => {
+test("cloudSecurityEvaluator (Phase 11): PASS with no open findings, FAIL on any open CRITICAL finding", () => {
+  const clean = cloudSecurityEvaluator({ cloudSecurity: { openCritical: 0, openHigh: 0, totalOpen: 0 } });
+  assert.equal(clean.status, "PASS");
+  assert.equal(clean.score, 100);
+
+  const critical = cloudSecurityEvaluator({ cloudSecurity: { openCritical: 1, openHigh: 2, totalOpen: 3 } });
+  assert.equal(critical.status, "FAIL");
+  assert.ok(critical.score < 100);
+});
+
+test("EVALUATORS registry exposes exactly the 18 documented evaluator keys", () => {
   const expectedKeys = [
     "encryptionEvaluator", "mfaEvaluator", "threatDetectionEvaluator", "malwareProtectionEvaluator",
     "dlpEvaluator", "zeroTrustEvaluator", "auditLoggingEvaluator", "sessionManagementEvaluator",
     "incidentResponseEvaluator", "threatIntelEvaluator", "soarAutomationEvaluator",
     "passwordPolicyEvaluator", "identityEvaluator", "deviceTrustEvaluator", "adaptiveAuthEvaluator",
-    "digitalSignatureEvaluator", "fileIntegrityEvaluator"
+    "digitalSignatureEvaluator", "fileIntegrityEvaluator",
+    // Phase 11 (CSPM/ASM)
+    "cloudSecurityEvaluator"
   ];
   assert.deepEqual(Object.keys(EVALUATORS).sort(), expectedKeys.sort());
 });

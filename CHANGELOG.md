@@ -6,6 +6,31 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 11 — Cloud Security Posture Management & Attack Surface Management
+**2026-07-04**
+
+A continuous CSPM/ASM layer that discovers and scores SecureShare's own deployment posture (there is no multi-cloud footprint to enumerate) and feeds findings into the existing SIEM, SOAR, and Compliance pipelines. No prior phase's code was rewritten.
+
+### Added
+- `backend/models/Asset.js`, `CloudFinding.js`, `Certificate.js`, `SecurityScoreSnapshot.js` - the discovered asset inventory, a unified finding store for configuration/exposure/certificate/threat-intel findings, monitored TLS certificates, and per-scan-run score snapshots
+- `backend/services/cloud/assetDiscovery.js` - discovers servers, the database, API route groups (via static parsing of `backend/routes/*.routes.js`), the frontend domain, file storage, ClamAV, and Docker/Compose assets
+- `backend/services/cloud/configScanner.js` - ~20 pure configuration/hardening rules (HTTPS/HSTS/CSP/X-Frame-Options/Permissions-Policy/helmet, CORS, directory listing, rate limiting, compression, debug mode, cookies, JWT secret strength, exposed Swagger/admin APIs, upload size limits)
+- `backend/services/cloud/certificateMonitor.js` - TLS certificate expiry/weak-TLS monitoring via Node's built-in `tls` module, with deduped 30/15/7-day and expired alerts
+- `backend/services/cloud/attackSurfaceScanner.js` - self-probes SecureShare's own base URL for well-known exposure paths (robots.txt, security.txt, .well-known, api-docs, admin, metrics, debug, .env, .git/config)
+- `backend/services/cloud/threatIntelCorrelation.js` - reuses `services/threatIntel/iocLookupService.js` to correlate discovered domains against known-malicious IOC data
+- `backend/services/cloud/scoreEngine.js` - Asset/Configuration/Exposure/Certificate/Identity/Compliance component scores plus a weighted overall score, persisted per run
+- `backend/services/cloud/cloudScanOrchestrator.js` (`runCloudScan`) - the single entry point chaining discovery → config scan → certs → attack surface → threat intel → score engine
+- `backend/services/cloud/cloudReportGenerator.js` - CSV/JSON/PDF export builders mirroring `services/compliance/reportGenerator.js`
+- `backend/controllers/cloud.controller.js`, `backend/routes/cloud.routes.js` (`/api/cloud/*`, admin-only) - dashboard, assets, findings, certificates, score, history, scan, and export endpoints
+- A new `cloudSecurityEvaluator` in `services/compliance/controlEvaluators.js`, seeded as one control under ISO 27001, SOC 2, GDPR, PCI DSS, NIST CSF, and OWASP ASVS - open CRITICAL/HIGH cloud findings now lower those frameworks' scores
+- A new "Cloud Exposure Response" playbook and `PUBLIC_EXPOSURE_CRITICAL`/`CERTIFICATE_EXPIRED`/`CLOUD_SCORE_DROP` automation triggers (`services/soar/seedPlaybooks.js`), plus two new SOAR actions: `rerunCloudScan`, `generateCloudReport`
+- 12 new SIEM event types (`asset_discovered`, `configuration_scan`, `public_exposure`, `certificate_expired`, `security_score_updated`, etc.) and a new `CLOUD` category, added additively to `SecurityEvent.js`/`Incident.js`
+- `/cloud-security` dashboard plus `/assets`, `/findings`, `/certificates`, `/reports`, and per-asset `/assets/:id` detail pages, with a new "Cloud Security" nav entry
+- A daily `node-cron` scan (04:00) and a startup scan in `server.js`, plus a fire-and-forget rescan after compliance policy updates
+- `backend/tests/cloud.test.js` - unit tests for the config scanner rules, certificate expiry/tier math, the score engine's weighting, and the new SOAR/SIEM trigger mappings
+
+---
+
 ## Phase 10 — Enterprise Compliance & Governance
 **2026-07-04**
 

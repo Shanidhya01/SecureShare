@@ -116,6 +116,18 @@ A read-only governance layer over Phases 1-9.5 - it evaluates and reports on the
 
 **Continuation - automation reuses existing triggers, not new hooks into core paths**: the "recheck compliance" rules attached to `THREAT_FOUND`/`DLP_BLOCK`/`MITRE_CRITICAL` are ordinary additional `AutomationRule` documents against triggers those phases already emit - no change to `soarEngine.js`, `ruleMatcher.js`'s trigger-detection logic, or the malware/DLP/threat-intel code that raises those events in the first place.
 
+### Cloud Security Posture Management & Attack Surface Management (Phase 11)
+
+A self-scanning layer over SecureShare's own deployment, not a multi-cloud inventory tool - there is no AWS/GCP/Azure footprint to enumerate here, so "cloud asset discovery" means introspecting and self-probing this project's own Express/Next.js stack.
+
+**Self-scan only, never an open-ended scanner**: the attack surface scanner (`services/cloud/attackSurfaceScanner.js`) only ever requests paths against SecureShare's own configured base URL (`APP_BASE_URL`, defaulting to `http://localhost:<PORT>`) - it accepts no caller-supplied target, so it can't be repurposed to probe third-party hosts. The certificate monitor similarly only connects to domains explicitly configured via `CLOUD_MONITORED_DOMAINS`/`WEBAUTHN_ORIGIN`.
+
+**Static analysis over live introspection**: the asset discovery service parses `backend/routes/*.routes.js` source files directly (rather than walking a live Express `app` object) to avoid a circular import between `server.js` and the new controller, and so discovery works identically whether or not the server process happens to be running.
+
+**Findings feed existing pipelines, not a new one**: every Phase 11 finding is either a `CloudFinding` document (config/exposure/certificate/threat-intel) or a `SecurityEvent` logged through the same `logSecurityEvent()` every other phase uses - which already re-enters the SOAR engine. A new `cloudSecurityEvaluator` reads open CRITICAL/HIGH `CloudFinding`s directly inside the existing Compliance evidence context, so cloud posture lowers compliance scores without a second scoring system.
+
+**What Phase 11 does not do**: it does not perform network port scanning against arbitrary hosts, does not call out to any cloud provider API, and does not block uploads/logins/downloads - like Phase 10, it is a continuous self-assessment layer, not an enforcement gate.
+
 ---
 
 ## Supported Algorithms
@@ -156,6 +168,7 @@ A read-only governance layer over Phases 1-9.5 - it evaluates and reports on the
 - Distribution of known-malware or disguised-executable files (Phase 4), to the extent ClamAV/VirusTotal/heuristic signals can detect them.
 - Accidental upload of files containing embedded secrets or PII in supported text formats (Phase 5), to the extent the configured detectors can recognize them.
 - Lack of visibility into related, multi-step suspicious activity (e.g. a quarantined file later targeted for download) — Phase 6's correlation engine surfaces this as a single incident instead of disconnected log rows.
+- Configuration drift and exposed attack surface in SecureShare's own deployment (missing security headers, expiring certificates, publicly reachable debug/admin paths) — Phase 11's CSPM/ASM scanner continuously re-checks these rather than relying on a one-time manual review.
 
 ### Out of scope (known, accepted limitations)
 - A compromised client device/browser at the moment of encryption, decryption, or signing — the endpoint holding key material in memory during that operation is inherently trusted for that operation.

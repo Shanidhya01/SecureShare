@@ -236,6 +236,27 @@ function fileIntegrityEvaluator_impl(context) {
   return { status, score, details: { totalFiles, hashedFiles }, recommendations };
 }
 
+/** Phase 11 (CSPM/ASM) PART 13: lowers compliance score whenever open cloud security posture
+ *  findings exist - an open CRITICAL finding fails the control outright regardless of count. */
+function cloudSecurityEvaluator_impl(context) {
+  const { openCritical = 0, openHigh = 0, totalOpen = 0 } = context.cloudSecurity || {};
+  if (totalOpen === 0) return { status: "PASS", score: 100, details: { openCritical, openHigh, totalOpen }, recommendations: [] };
+
+  if (openCritical > 0) {
+    return {
+      status: "FAIL",
+      score: clampScore(100 - openCritical * 25 - openHigh * 10),
+      details: { openCritical, openHigh, totalOpen },
+      recommendations: ["Remediate open CRITICAL cloud security posture findings immediately - see the Cloud Security dashboard."]
+    };
+  }
+
+  const score = clampScore(100 - openHigh * 10 - totalOpen * 2);
+  const status = verdictFromScore(score, { partialAt: 60, passAt: 90 });
+  const recommendations = status !== "PASS" ? ["Resolve outstanding cloud configuration/exposure findings from the CSPM/ASM scanner."] : [];
+  return { status, score, details: { openCritical, openHigh, totalOpen }, recommendations };
+}
+
 export const encryptionEvaluator = withEvaluatorMeta(encryptionEvaluator_impl);
 export const mfaEvaluator = withEvaluatorMeta(mfaEvaluator_impl);
 export const threatDetectionEvaluator = withEvaluatorMeta(threatDetectionEvaluator_impl);
@@ -253,6 +274,7 @@ export const deviceTrustEvaluator = withEvaluatorMeta(deviceTrustEvaluator_impl)
 export const adaptiveAuthEvaluator = withEvaluatorMeta(adaptiveAuthEvaluator_impl);
 export const digitalSignatureEvaluator = withEvaluatorMeta(digitalSignatureEvaluator_impl);
 export const fileIntegrityEvaluator = withEvaluatorMeta(fileIntegrityEvaluator_impl);
+export const cloudSecurityEvaluator = withEvaluatorMeta(cloudSecurityEvaluator_impl);
 
 export const EVALUATORS = {
   encryptionEvaluator,
@@ -271,5 +293,6 @@ export const EVALUATORS = {
   deviceTrustEvaluator,
   adaptiveAuthEvaluator,
   digitalSignatureEvaluator,
-  fileIntegrityEvaluator
+  fileIntegrityEvaluator,
+  cloudSecurityEvaluator
 };

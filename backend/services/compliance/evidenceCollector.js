@@ -15,6 +15,7 @@ import AutomationRule from "../../models/AutomationRule.js";
 import AutomationExecution from "../../models/AutomationExecution.js";
 import { getPolicy } from "../../models/SecurityPolicy.js";
 import ComplianceEvidence from "../../models/ComplianceEvidence.js";
+import CloudFinding from "../../models/CloudFinding.js";
 import { getCurrentPolicyValues } from "./policyEvaluator.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +39,8 @@ export async function buildComplianceContext() {
     roleAssignedUsers, privilegedUsers, activeUsers90d,
     totalDevices, trustedDevices, revokedDevices,
     riskEventsTotal, highRiskChallenged,
-    signedFiles, hashedFiles
+    signedFiles, hashedFiles,
+    openCriticalCloudFindings, openHighCloudFindings, totalOpenCloudFindings
   ] = await Promise.all([
     File.countDocuments(),
     File.countDocuments({ encryptionVersion: { $gte: 2 } }),
@@ -72,7 +74,10 @@ export async function buildComplianceContext() {
     SecurityEvent.countDocuments({ type: "login", "metadata.riskLevel": { $in: ["High", "Critical"] } }),
     SecurityEvent.countDocuments({ type: "step_up_auth" }),
     File.countDocuments({ signature: { $exists: true, $ne: null } }),
-    File.countDocuments({ fileHash: { $exists: true, $ne: null } })
+    File.countDocuments({ fileHash: { $exists: true, $ne: null } }),
+    CloudFinding.countDocuments({ status: "open", severity: "CRITICAL" }),
+    CloudFinding.countDocuments({ status: "open", severity: "HIGH" }),
+    CloudFinding.countDocuments({ status: "open" })
   ]);
 
   const inactiveUsers90d = Math.max(0, totalUsers - activeUsers90d.length);
@@ -106,6 +111,7 @@ export async function buildComplianceContext() {
     adaptiveAuth: { riskEventsTotal, highRiskChallenged },
     digitalSignature: { totalFiles, signedFiles },
     fileIntegrity: { totalFiles, hashedFiles },
+    cloudSecurity: { openCritical: openCriticalCloudFindings, openHigh: openHighCloudFindings, totalOpen: totalOpenCloudFindings },
     _raw: { securityPolicy, compliancePolicyValues }
   };
 }
@@ -133,5 +139,6 @@ export const EVALUATOR_SOURCE_TYPE = {
   deviceTrustEvaluator: "IDENTITY",
   adaptiveAuthEvaluator: "SECURITY_EVENT",
   digitalSignatureEvaluator: "FILE_METADATA",
-  fileIntegrityEvaluator: "FILE_METADATA"
+  fileIntegrityEvaluator: "FILE_METADATA",
+  cloudSecurityEvaluator: "SECURITY_EVENT"
 };

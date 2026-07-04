@@ -13,6 +13,7 @@ import {
   Bot,
   Fingerprint,
   ClipboardCheck,
+  Cloud,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ export const navItems: NavItem[] = [
   { label: "SOAR", href: "/soar", icon: Bot },
   { label: "Identity & Access", href: "/identity", icon: Fingerprint },
   { label: "Compliance", href: "/compliance", icon: ClipboardCheck },
+  { label: "Cloud Security", href: "/cloud-security", icon: Cloud },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
   { label: "Security Operations", href: "/soc", icon: Radar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },

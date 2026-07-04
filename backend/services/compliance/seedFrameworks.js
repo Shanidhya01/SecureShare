@@ -32,7 +32,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "A.5.7", title: "Threat Intelligence", category: "Operations Security", severity: "MEDIUM", evaluatorKey: "threatIntelEvaluator", recommendation: "Continuously consume threat intelligence feeds." },
     { controlId: "A.5.17", title: "Authentication Information (Passwords)", category: "Access Control", severity: "HIGH", evaluatorKey: "passwordPolicyEvaluator", recommendation: "Enforce a strong password policy with complexity and expiry." },
     { controlId: "A.5.18", title: "Access Rights Management", category: "Access Control", severity: "MEDIUM", evaluatorKey: "identityEvaluator", recommendation: "Assign and periodically review RBAC roles for every account." },
-    { controlId: "A.8.1", title: "User Endpoint Devices", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain a trusted-device inventory and revoke stale devices." }
+    { controlId: "A.8.1", title: "User Endpoint Devices", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain a trusted-device inventory and revoke stale devices." },
+    { controlId: "A.5.30", title: "Cloud Security Posture", category: "Operations Security", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Remediate open CSPM/ASM findings (misconfigurations, exposed endpoints, expiring certificates)." }
   ],
   SOC2: [
     { controlId: "CC6.1", title: "Logical Access Controls", category: "Security", severity: "HIGH", evaluatorKey: "mfaEvaluator", recommendation: "Enforce MFA as a logical access control." },
@@ -44,7 +45,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "CC7.4", title: "Automated Response Procedures", category: "Processing Integrity", severity: "MEDIUM", evaluatorKey: "soarAutomationEvaluator", recommendation: "Automate incident response playbooks." },
     { controlId: "CC6.1-DLP", title: "Data Loss Prevention", category: "Confidentiality", severity: "HIGH", evaluatorKey: "dlpEvaluator", recommendation: "Prevent exfiltration of confidential data." },
     { controlId: "CC6.3", title: "Role-Based Access Provisioning", category: "Security", severity: "MEDIUM", evaluatorKey: "identityEvaluator", recommendation: "Provision access based on assigned roles and review regularly." },
-    { controlId: "CC6.1-RISK", title: "Risk-Based Authentication", category: "Security", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Challenge high-risk logins with step-up authentication." }
+    { controlId: "CC6.1-RISK", title: "Risk-Based Authentication", category: "Security", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Challenge high-risk logins with step-up authentication." },
+    { controlId: "CC7.1", title: "Cloud Security Posture Monitoring", category: "Security", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Continuously monitor and remediate cloud configuration/exposure findings." }
   ],
   GDPR: [
     { controlId: "Art.32", title: "Security of Processing", category: "Data Protection", severity: "CRITICAL", evaluatorKey: "encryptionEvaluator", recommendation: "Apply encryption as an Article 32 technical measure." },
@@ -53,7 +55,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "Art.30", title: "Records of Processing (Audit Trail)", category: "Access Rights", severity: "MEDIUM", evaluatorKey: "auditLoggingEvaluator", recommendation: "Maintain records of processing activities via audit logs." },
     { controlId: "Art.25", title: "Data Protection by Design (DLP)", category: "Data Protection", severity: "HIGH", evaluatorKey: "dlpEvaluator", recommendation: "Prevent unauthorized disclosure of personal data." },
     { controlId: "Art.32-Malware", title: "Resilience Against Malicious Processing", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "malwareProtectionEvaluator", recommendation: "Ensure malware cannot compromise personal data integrity." },
-    { controlId: "Art.32-Integrity", title: "Ability to Verify Integrity", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "fileIntegrityEvaluator", recommendation: "Maintain a verifiable integrity hash for stored personal data files." }
+    { controlId: "Art.32-Integrity", title: "Ability to Verify Integrity", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "fileIntegrityEvaluator", recommendation: "Maintain a verifiable integrity hash for stored personal data files." },
+    { controlId: "Art.32-CSPM", title: "Ongoing Assessment of Technical Measures", category: "Data Protection", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Regularly test and evaluate the effectiveness of technical security measures via CSPM/ASM scanning." }
   ],
   HIPAA: [
     { controlId: "164.312(a)(1)", title: "Access Control", category: "Access Control", severity: "HIGH", evaluatorKey: "mfaEvaluator", recommendation: "Require unique, MFA-protected user identification." },
@@ -73,7 +76,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "12.10", title: "Incident Response Plan", category: "Monitoring", severity: "HIGH", evaluatorKey: "incidentResponseEvaluator", recommendation: "Maintain and test an incident response plan." },
     { controlId: "11.5", title: "Detect and Respond to Intrusions", category: "Monitoring", severity: "MEDIUM", evaluatorKey: "threatDetectionEvaluator", recommendation: "Deploy intrusion detection/prevention techniques." },
     { controlId: "8.3", title: "Strong Authentication for Users and Administrators", category: "Access Control", severity: "HIGH", evaluatorKey: "passwordPolicyEvaluator", recommendation: "Enforce strong password requirements for all accounts." },
-    { controlId: "9.2", title: "Physical/Device Access Controls", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain and review a trusted-device inventory." }
+    { controlId: "9.2", title: "Physical/Device Access Controls", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain and review a trusted-device inventory." },
+    { controlId: "11.3", title: "Vulnerability/Attack Surface Scanning", category: "Vulnerability Management", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Run regular external/internal vulnerability and attack-surface scans and remediate findings." }
   ],
   NIST_CSF: [
     { controlId: "PR.DS-1", title: "Data-at-Rest Protection", category: "Protect", severity: "CRITICAL", evaluatorKey: "encryptionEvaluator", recommendation: "Protect data-at-rest with encryption." },
@@ -87,7 +91,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "PR.DS-5", title: "Data Leak Protection", category: "Protect", severity: "HIGH", evaluatorKey: "dlpEvaluator", recommendation: "Implement protections against data leaks." },
     { controlId: "PR.AC-1", title: "Identity Governance", category: "Protect", severity: "MEDIUM", evaluatorKey: "identityEvaluator", recommendation: "Manage identities and credentials for authorized devices and users." },
     { controlId: "PR.DS-6", title: "Integrity Checking Mechanisms", category: "Protect", severity: "MEDIUM", evaluatorKey: "fileIntegrityEvaluator", recommendation: "Verify software/firmware/information integrity using checking mechanisms." },
-    { controlId: "DE.CM-3", title: "Personnel Activity Monitoring", category: "Detect", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Monitor personnel activity for risk-based authentication events." }
+    { controlId: "DE.CM-3", title: "Personnel Activity Monitoring", category: "Detect", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Monitor personnel activity for risk-based authentication events." },
+    { controlId: "ID.RA-1", title: "Asset Vulnerabilities Identified", category: "Identify", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Continuously identify and remediate asset/configuration vulnerabilities via CSPM/ASM scanning." }
   ],
   CIS: [
     { controlId: "CIS-6.5", title: "Multi-Factor Authentication", category: "Access Control", severity: "HIGH", evaluatorKey: "mfaEvaluator", recommendation: "Require MFA for all accounts." },
@@ -110,7 +115,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "V2.1-PW", title: "Password Security Requirements", category: "Authentication", severity: "HIGH", evaluatorKey: "passwordPolicyEvaluator", recommendation: "Enforce minimum length and complexity for all passwords." },
     { controlId: "V2.2", title: "General Authenticator Security (Risk-Based)", category: "Authentication", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Apply risk-based/step-up authentication for anomalous logins." },
     { controlId: "V6.1", title: "Data Classification & Integrity", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "fileIntegrityEvaluator", recommendation: "Verify the integrity of stored data using cryptographic hashes." },
-    { controlId: "V6.3", title: "Digital Signature Verification", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "digitalSignatureEvaluator", recommendation: "Digitally sign and verify sensitive data artifacts." }
+    { controlId: "V6.3", title: "Digital Signature Verification", category: "Data Protection", severity: "MEDIUM", evaluatorKey: "digitalSignatureEvaluator", recommendation: "Digitally sign and verify sensitive data artifacts." },
+    { controlId: "V14.5", title: "Attack Surface Configuration Hardening", category: "Data Protection", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Harden the application's exposed configuration surface (headers, CORS, admin endpoints) per ASVS V14." }
   ]
 };
 

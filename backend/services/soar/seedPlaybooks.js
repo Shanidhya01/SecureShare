@@ -14,6 +14,7 @@ export async function ensureSeedPlaybooks() {
     // rules without touching anything an admin may have since edited, same idempotent-top-up
     // pattern as services/compliance/seedFrameworks.js's ensureAdditionalControls().
     await ensureAdditionalComplianceAutomation();
+    await ensureAdditionalCloudAutomation();
     return;
   }
 
@@ -111,6 +112,42 @@ export async function ensureSeedPlaybooks() {
   ]);
 
   await ensureAdditionalComplianceAutomation();
+  await ensureAdditionalCloudAutomation();
+}
+
+/**
+ * Phase 11 (CSPM/ASM): idempotently ensures a "Cloud Exposure Response" playbook (and its
+ * PUBLIC_EXPOSURE_CRITICAL/CERTIFICATE_EXPIRED/CLOUD_SCORE_DROP rules) exist, called on every
+ * ensureSeedPlaybooks() run - same guarded-insert pattern as
+ * ensureAdditionalComplianceAutomation() above.
+ */
+async function ensureAdditionalCloudAutomation() {
+  let playbook = await Playbook.findOne({ name: "Cloud Exposure Response" });
+  if (!playbook) {
+    playbook = await Playbook.create({
+      name: "Cloud Exposure Response",
+      description: "Phase 11: raises an incident, notifies admins, re-runs the cloud scan, and generates a report when a critical public exposure, expired certificate, or cloud score drop is detected.",
+      category: "Cloud Exposure Response",
+      steps: [
+        { type: "raiseIncident", params: { title: "Cloud security exposure detected", severity: "HIGH" }, continueOnFailure: true },
+        { type: "notifyAdmin", params: { title: "Cloud security exposure detected", severity: "HIGH" }, continueOnFailure: true },
+        { type: "rerunCloudScan", params: {}, continueOnFailure: true },
+        { type: "generateCloudReport", params: {}, continueOnFailure: true }
+      ]
+    });
+  }
+
+  const additionalRules = [
+    { name: "Auto-respond to critical public exposure", trigger: "PUBLIC_EXPOSURE_CRITICAL", playbookId: playbook._id, priority: 10 },
+    { name: "Auto-respond to expired certificates", trigger: "CERTIFICATE_EXPIRED", playbookId: playbook._id, priority: 10 },
+    { name: "Auto-respond to cloud security score drops", trigger: "CLOUD_SCORE_DROP", playbookId: playbook._id, priority: 10 },
+    { name: "Recheck compliance after cloud exposure", trigger: "PUBLIC_EXPOSURE_CRITICAL", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 }
+  ];
+
+  for (const rule of additionalRules) {
+    const exists = await AutomationRule.exists({ name: rule.name });
+    if (!exists) await AutomationRule.create(rule);
+  }
 }
 
 /**

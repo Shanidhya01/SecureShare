@@ -40,7 +40,9 @@ const automationRuleSchema = new mongoose.Schema(
         // Phase 9.5: Adaptive Authentication
         "IMPOSSIBLE_TRAVEL", "CRITICAL_RISK_LOGIN",
         // Phase 10: Compliance & Governance
-        "COMPLIANCE_SCORE_DROP"
+        "COMPLIANCE_SCORE_DROP",
+        // Phase 11: CSPM / Attack Surface Management
+        "PUBLIC_EXPOSURE_CRITICAL", "CERTIFICATE_EXPIRED", "CLOUD_SCORE_DROP"
       ]
     },
     conditions: { type: [conditionSchema], default: [] },

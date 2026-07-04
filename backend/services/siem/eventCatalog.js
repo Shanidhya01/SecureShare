@@ -72,12 +72,26 @@ export const TYPE_META = {
   // control_passed/control_failed above) and a framework-level configuration-change event.
   compliance_failed: { siemType: "COMPLIANCE_FAILED", severity: "HIGH", category: "COMPLIANCE", label: "Compliance Run Failed" },
   compliance_passed: { siemType: "COMPLIANCE_PASSED", severity: "INFO", category: "COMPLIANCE", label: "Compliance Run Passed" },
-  framework_updated: { siemType: "FRAMEWORK_UPDATED", severity: "LOW", category: "COMPLIANCE", label: "Compliance Framework Updated" }
+  framework_updated: { siemType: "FRAMEWORK_UPDATED", severity: "LOW", category: "COMPLIANCE", label: "Compliance Framework Updated" },
+
+  // --- New types (Phase 11: CSPM / Attack Surface Management) ---
+  asset_discovered: { siemType: "ASSET_DISCOVERED", severity: "INFO", category: "CLOUD", label: "Cloud Asset Discovered" },
+  asset_updated: { siemType: "ASSET_UPDATED", severity: "INFO", category: "CLOUD", label: "Cloud Asset Updated" },
+  configuration_scan: { siemType: "CONFIGURATION_SCAN", severity: "INFO", category: "CLOUD", label: "Configuration Scan Run" },
+  configuration_failure: { siemType: "CONFIGURATION_FAILURE", severity: "HIGH", category: "CLOUD", label: "Configuration Finding" },
+  public_exposure: { siemType: "PUBLIC_EXPOSURE", severity: "HIGH", category: "CLOUD", label: "Public Exposure Detected" },
+  weak_tls: { siemType: "WEAK_TLS", severity: "MEDIUM", category: "CLOUD", label: "Weak TLS Configuration" },
+  certificate_expiring: { siemType: "CERTIFICATE_EXPIRING", severity: "MEDIUM", category: "CLOUD", label: "Certificate Expiring Soon" },
+  certificate_expired: { siemType: "CERTIFICATE_EXPIRED", severity: "CRITICAL", category: "CLOUD", label: "Certificate Expired" },
+  missing_security_headers: { siemType: "MISSING_SECURITY_HEADERS", severity: "MEDIUM", category: "CLOUD", label: "Missing Security Headers" },
+  cloud_risk_updated: { siemType: "CLOUD_RISK_UPDATED", severity: "INFO", category: "CLOUD", label: "Cloud Risk Score Updated" },
+  security_score_updated: { siemType: "SECURITY_SCORE_UPDATED", severity: "INFO", category: "CLOUD", label: "Overall Security Score Updated" },
+  cloud_ioc_match: { siemType: "CLOUD_IOC_MATCH", severity: "CRITICAL", category: "CLOUD", label: "Cloud Asset IOC Match" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD"
 ];
 
 export function resolveEventMeta(type) {

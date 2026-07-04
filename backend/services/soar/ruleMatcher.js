@@ -44,6 +44,14 @@ export function eventTriggerFor(event) {
       return event.metadata?.scoreDropped ? "COMPLIANCE_SCORE_DROP" : null;
     case "control_failed":
       return event.metadata?.severity === "CRITICAL" ? "COMPLIANCE_SCORE_DROP" : null;
+    case "public_exposure":
+      return ["CRITICAL", "HIGH"].includes(event.metadata?.severity) ? "PUBLIC_EXPOSURE_CRITICAL" : null;
+    case "certificate_expired":
+      return "CERTIFICATE_EXPIRED";
+    case "cloud_ioc_match":
+      return "IOC_MATCH";
+    case "security_score_updated":
+      return event.metadata?.scoreDropped ? "CLOUD_SCORE_DROP" : null;
     case "mitre_mapping": {
       const techniques = event.metadata?.techniques || [];
       const isCritical = techniques.some((t) => CRITICAL_MITRE_TACTICS.includes(t.tactic));
