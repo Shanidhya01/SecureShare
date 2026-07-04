@@ -6,6 +6,45 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 10 — Enterprise Compliance & Governance
+**2026-07-04**
+
+An additive governance layer that continuously evaluates SecureShare against 8 security/privacy frameworks by reading evidence straight from the existing SIEM, SOAR, Threat Intelligence, IAM, DLP, and Zero Trust subsystems - no prior phase's detection/crypto/policy code was modified.
+
+### Added
+- `backend/models/ComplianceFramework.js`, `ComplianceControl.js`, `ComplianceAssessment.js`, `ComplianceEvidence.js`, `CompliancePolicy.js`, `ComplianceReport.js` - the framework/control catalog, per-run assessment history, linked evidence, versioned governance policies, and report audit records
+- `backend/services/compliance/controlEvaluators.js` - 11 pure, DB-free evaluators (encryption, MFA, threat detection, malware protection, DLP, zero trust, audit logging, session management, incident response, threat intel, SOAR automation), mirroring `services/soar/ruleMatcher.js`'s pure-function testability
+- `backend/services/compliance/evidenceCollector.js` - builds the shared evidence context from `File`, `User`, `SecurityEvent`, `Incident`, `AutomationRule`/`AutomationExecution`, and `SecurityPolicy`, and persists `ComplianceEvidence` linking each source to a control
+- `backend/services/compliance/complianceEngine.js` (`runAssessment`) - orchestrates a full or per-framework assessment run, computes framework/overall scores, and emits `compliance_scan`/`control_passed`/`control_failed` SIEM events - which automatically re-enter the existing SOAR engine, so a critical control failure or score drop beneath the 70 threshold can trigger the new `COMPLIANCE_SCORE_DROP` automation rule with zero extra plumbing
+- `backend/services/compliance/seedFrameworks.js` - idempotent seed of ISO 27001, SOC 2, GDPR, HIPAA, PCI DSS, NIST CSF, CIS Controls, and OWASP ASVS, each with a representative subset (6-9) of real, well-known controls mapped to an evaluator
+- `backend/services/compliance/reportGenerator.js` - CSV/JSON report builders (manual string building, matching `soar.controller.js`'s existing export convention) plus a PDF builder using the new `pdfkit` dependency
+- `backend/services/compliance/policyEvaluator.js` - versioned `CompliancePolicy` read/write helpers (file retention, max upload size, blocked file types, restricted countries, DLP enforcement) plus a pure `evaluatePolicyViolations()` checker
+- `backend/services/soar/actions/generateComplianceReport.js` - new SOAR action, runs a fresh assessment and records a `ComplianceReport`, registered in `actions/index.js`
+- New `COMPLIANCE` category and 7 SIEM event types (`compliance_scan`, `control_passed`, `control_failed`, `policy_updated`, `compliance_policy_violation`, `report_generated`, `evidence_collected`) in `eventCatalog.js`/`SecurityEvent.js`/`Incident.js`; new `COMPLIANCE_SCORE_DROP` trigger in `AutomationRule.js` + `ruleMatcher.js`
+- Compliance REST API (`/api/compliance/frameworks`, `/controls`, `/assessments`, `/scan`, `/evidence`, `/policies`, `/reports`, `/dashboard`) - admin-only end to end, matching SOAR's rule/playbook config gating rather than a per-user page
+- A daily `node-cron` job (03:00) re-running the full assessment, attributed to the first admin account found
+- Compliance & Governance dashboard: `frontend/app/compliance/page.tsx` - score, framework status, control coverage, open findings, recent assessments, an evidence browser, policy status, and recommendations, plus "Compliance" added to the main navigation
+- `backend/tests/compliance.test.js` - 23 unit/integration tests covering all 11 evaluators, the policy violation checker, and the new `compliance_scan`/`control_failed` → `COMPLIANCE_SCORE_DROP` ruleMatcher mappings
+
+### Changed
+- Nothing in prior phases was rewritten; all Phase 10 additions read existing collections rather than duplicating their storage (e.g. MFA/session/password/country settings are read live from the existing `SecurityPolicy`, not copied into `CompliancePolicy`)
+- New dependency: `pdfkit` (backend)
+
+### Added (continuation, same date)
+- 6 additional pure evaluators in `controlEvaluators.js` - password policy, identity governance, device trust, adaptive authentication, digital signatures, and file integrity (17 total). Every evaluator now also returns `severity` (derived from its verdict) and `evidence` (a readable summary of `details`) via a shared `withEvaluatorMeta()` wrapper, without changing any existing evaluator's core logic
+- `backend/services/compliance/riskScoring.js` - pure `computeRiskScore()` (severity-weighted 0-100 risk score), `riskDistribution()`, and `buildComplianceTrend()`, wired into `complianceEngine.js`'s `runAssessment()` output and a new `getComplianceTrend()` export (reads existing `ComplianceAssessment` history - no new trend-storage collection needed)
+- New `COMPLIANCE_FAILED`/`COMPLIANCE_PASSED` (overall-run-level, distinct from the existing per-control `CONTROL_FAILED`/`CONTROL_PASSED`) and `FRAMEWORK_UPDATED` SIEM events
+- `backend/services/soar/actions/assignComplianceOwner.js` and `rerunComplianceAssessment.js` - two new SOAR actions powering a seeded "Compliance Failure Response" playbook (raise incident → notify admin → assign owner → re-run assessment) on the existing `COMPLIANCE_SCORE_DROP` trigger, plus three lightweight "recheck compliance" automation rules attached to the existing `THREAT_FOUND`/`DLP_BLOCK`/`MITRE_CRITICAL` triggers for continuous compliance after malware detections, DLP violations, and SIEM-critical alerts - no `ruleMatcher.js` changes needed since those triggers already existed
+- Policy management: `validatePolicyValue()`, `getPolicyHistory()`, `rollbackPolicy()`, `setPolicyApproval()`, `setPolicyVersionEnabled()` in `policyEvaluator.js`; `CompliancePolicy` gained an additive `approvalStatus`/`approvedBy`/`approvedAt` review trail
+- API additions on `/api/compliance`: `GET /framework/:id` + `PATCH /frameworks/:id`, `GET /control/:id`, `GET /findings`, `POST /run` (scan alias), `POST /report` (report alias), `POST /policies` (create), `PATCH /policies/:id` (enable/disable/approve a specific version), `GET /policies/:name/history`, `POST /policies/:name/rollback/:version`, and dedicated `GET /export/pdf|csv|json` routes alongside the existing `?format=` query style
+- Reports (CSV/JSON/PDF) now include risk score, risk distribution, and a 90-day trend/"Trend Analysis" section, not just framework/control scores
+- Compliance dashboard gained a Risk Score stat card, a Compliance Trend/Assessment History area chart, a Risk Distribution pie chart, and a Governance Activity (policy violations / audit events, 30d) bar chart - all via Recharts, matching the existing chart styling
+- "Compliance Center" links added to the Topbar account menu, the Dashboard (admin-only quick action + stat card), and the Security Center page header (admin-only)
+- `idempotent top-up functions - `ensureAdditionalControls()` in `seedFrameworks.js` and `ensureAdditionalComplianceAutomation()` in `seedPlaybooks.js` - so a database that already seeded Phase 10 (or Phase 8) before this continuation still picks up the new controls/playbook/rules on next start, without re-seeding or duplicating anything
+- 16 additional tests in `backend/tests/compliance.test.js` (39 total in that file): the 6 new evaluators, the severity/evidence wrapper, risk scoring, policy value validation, and report-builder shape
+
+---
+
 ## Phase 9.5 — Enterprise Authentication & Adaptive Access
 **2026-07-04**
 

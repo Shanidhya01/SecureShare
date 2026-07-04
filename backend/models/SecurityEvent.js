@@ -26,7 +26,12 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 9: IAM / MFA
       "login_failed", "mfa_success", "mfa_failed", "passkey_login", "device_trusted", "policy_block", "step_up_auth",
       // Phase 9.5: Adaptive Authentication
-      "impossible_travel"
+      "impossible_travel",
+      // Phase 10: Compliance & Governance
+      "compliance_scan", "control_passed", "control_failed", "policy_updated",
+      "compliance_policy_violation", "report_generated", "evidence_collected",
+      // Phase 10 continuation: overall-run pass/fail verdicts + framework config changes
+      "compliance_failed", "compliance_passed", "framework_updated"
     ]
   },
   message: String,
@@ -61,13 +66,18 @@ const securityEventSchema = new mongoose.Schema({
       // eventCatalog.js) but kept here so historical documents remain valid against this enum.
       "LOGIN", "LOGIN_FAILED", "MFA_SUCCESS", "MFA_FAILED", "PASSKEY_LOGIN", "DEVICE_TRUSTED", "POLICY_BLOCK", "STEP_UP_AUTH",
       // Phase 9.5: Adaptive Authentication
-      "LOGIN_SUCCESS", "IMPOSSIBLE_TRAVEL"
+      "LOGIN_SUCCESS", "IMPOSSIBLE_TRAVEL",
+      // Phase 10: Compliance & Governance ("POLICY_VIOLATION" already exists above, Phase 6)
+      "COMPLIANCE_SCAN", "CONTROL_PASSED", "CONTROL_FAILED", "POLICY_UPDATED",
+      "REPORT_GENERATED", "EVIDENCE_COLLECTED",
+      // Phase 10 continuation
+      "COMPLIANCE_FAILED", "COMPLIANCE_PASSED", "FRAMEWORK_UPDATED"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

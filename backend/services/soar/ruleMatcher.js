@@ -40,6 +40,10 @@ export function eventTriggerFor(event) {
       return "IMPOSSIBLE_TRAVEL";
     case "step_up_auth":
       return event.metadata?.riskLevel === "Critical" ? "CRITICAL_RISK_LOGIN" : null;
+    case "compliance_scan":
+      return event.metadata?.scoreDropped ? "COMPLIANCE_SCORE_DROP" : null;
+    case "control_failed":
+      return event.metadata?.severity === "CRITICAL" ? "COMPLIANCE_SCORE_DROP" : null;
     case "mitre_mapping": {
       const techniques = event.metadata?.techniques || [];
       const isCritical = techniques.some((t) => CRITICAL_MITRE_TACTICS.includes(t.tactic));

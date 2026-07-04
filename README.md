@@ -862,6 +862,30 @@ Phase 9 built the IAM foundation; Phase 9.5 sharpens the risk engine it introduc
 
 ---
 
+## 📋 Phase 10: Enterprise Compliance & Governance
+
+Every prior phase implements a security control; Phase 10 is the governance layer that continuously *proves* those controls are working, against 8 industry frameworks - ISO 27001, SOC 2 Type II, GDPR, HIPAA, PCI DSS, NIST Cybersecurity Framework, CIS Controls, and OWASP ASVS. **Nothing from Phases 1-9.5 was rewritten** - the compliance engine only reads evidence from the collections those phases already maintain.
+
+**Control catalog**: `backend/services/compliance/seedFrameworks.js` seeds a representative subset (6-9) of real, well-known controls per framework - e.g. ISO 27001 A.8.24, GDPR Art.32, PCI DSS 3.5 all map to the same `encryptionEvaluator`. This is intentionally not an exhaustive published control library; it's enough correctly-categorized controls per framework to drive the assessment engine end-to-end.
+
+**Compliance engine** (`backend/services/compliance/complianceEngine.js`): `runAssessment()` builds one shared evidence context per run (file encryption ratio, MFA adoption, threat/malware containment rates, DLP enforcement, zero-trust policy pass rate, audit log volume, session policy configuration, incident resolution rate, threat intel lookup activity, SOAR automation health), then runs every control's `evaluatorKey` (`backend/services/compliance/controlEvaluators.js`, 11 pure functions mirroring `ruleMatcher.js`'s testability) against it, persisting a `ComplianceAssessment` + linked `ComplianceEvidence` per control.
+
+**SIEM/SOAR integration, for free**: `runAssessment()` emits `compliance_scan`/`control_passed`/`control_failed` events through the existing `logSecurityEvent()` - which already re-enters the SOAR engine after every event. A new `COMPLIANCE_SCORE_DROP` trigger (fired when the overall score drops below 70 or a `CRITICAL`-severity control fails) can run `raiseIncident`/`notifyAdmin`/the new `generateComplianceReport` action, with zero new event-pipeline code.
+
+**Governance policies** (`backend/models/CompliancePolicy.js`): a versioned document per governance-only setting (file retention, max upload size, blocked file types, restricted countries, DLP enforcement) - every update inserts a new version rather than mutating one, preserving full history. Settings that already exist on `SecurityPolicy` (MFA requirement, session timeout, password length, allowed countries) are read live from there as evidence rather than duplicated.
+
+**Reports**: CSV and JSON are built the same manual-string way `soar.controller.js`'s existing exports work (no new dependency); PDF uses the one new dependency, `pdfkit`.
+
+**Compliance dashboard**: `/compliance` (`frontend/app/compliance/page.tsx`) - overall score, framework scores, control coverage, open findings/failed controls, recent assessments, an evidence browser, policy status, and recommendations. Admin-only end to end (`requireAdmin` on every `/api/compliance/*` route), matching SOAR's rule/playbook config gating rather than a per-user page like `/identity`.
+
+**Continuous compliance**: a daily `node-cron` job (03:00) re-runs the full assessment; policy updates trigger an immediate targeted re-scan. A "Compliance Failure Response" playbook (raise incident → notify admin → assign owner → re-run assessment) fires on `COMPLIANCE_SCORE_DROP`, and lightweight recheck rules attached to the existing `THREAT_FOUND`/`DLP_BLOCK`/`MITRE_CRITICAL` triggers re-run the assessment after malware detections, DLP violations, and SIEM-critical alerts.
+
+**17 evaluators, risk scoring, and governance analytics**: beyond the original 11, `controlEvaluators.js` also covers password policy, identity governance, device trust, adaptive authentication, digital signatures, and file integrity - every evaluator returns a derived `severity` and `evidence` summary alongside `status`/`score`. `services/compliance/riskScoring.js` turns a run's assessments into a severity-weighted 0-100 risk score, a risk-distribution breakdown, and a day-by-day compliance trend (read from `ComplianceAssessment` history, no separate trend collection). The `/compliance` dashboard surfaces all of this via Recharts (risk score card, compliance trend, risk distribution, governance activity), and "Compliance Center" is linked from the Topbar, Dashboard, and Security Center for admins.
+
+**Fuller policy governance**: `CompliancePolicy` values are now validated by shape/range before being saved, and gained an approval trail (`approvalStatus`/`approvedBy`/`approvedAt`) plus per-name version history and rollback (`GET /policies/:name/history`, `POST /policies/:name/rollback/:version`) - rollback creates a new version copying an older one's value, never mutating history.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -1156,6 +1180,33 @@ docker-compose down
 | `PATCH` | `/users/:id/role` | Change a user's role | Org Owner |
 | `GET` | `/login-history` | Your own login/MFA/passkey/policy event history | Yes |
 | `GET` | `/stats` | Analytics for `/identity` - risk levels, MFA usage, countries, devices, failed logins - see [Phase 9.5](#-phase-95-enterprise-authentication--adaptive-access) | Yes |
+
+### Compliance Routes (`/api/compliance`, Phase 10)
+
+All routes below are admin-only (`requireAdmin`).
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/dashboard` | Overall score, risk score, risk distribution, framework status, control coverage, open findings, trend, evidence/policy/report summaries | Admin |
+| `GET` | `/frameworks` | List the 8 supported compliance frameworks | Admin |
+| `GET` | `/frameworks/:id` \| `/framework/:id` | Get a single framework (both plural/singular paths) | Admin |
+| `PATCH` | `/frameworks/:id` | Enable/disable a framework | Admin |
+| `GET` | `/controls` | List controls, optionally filtered by `framework`/`category` | Admin |
+| `GET` | `/control/:id` | Get a single control | Admin |
+| `GET` | `/assessments` | List assessment history, optionally filtered by `framework`/`status` | Admin |
+| `GET` | `/findings` | Open findings (FAIL/PARTIAL) across every control's latest assessment | Admin |
+| `POST` | `/scan` \| `/run` | Run a full (or per-`frameworkKey`) compliance assessment | Admin |
+| `GET` | `/evidence` | List collected evidence, optionally filtered by `control`/`sourceType` | Admin |
+| `POST` | `/evidence/:id/approve` | Mark a piece of evidence as reviewed/approved | Admin |
+| `GET` | `/policies` | List current governance policy values (retention, upload size, blocked types, restricted countries, DLP enforcement) | Admin |
+| `POST` | `/policies` | Create the first version of a governance policy | Admin |
+| `PUT` | `/policies/:name` | Set a new versioned value for a governance policy | Admin |
+| `PATCH` | `/policies/:id` | Enable/disable or set the approval status of one specific policy version | Admin |
+| `GET` | `/policies/:name/history` | Full version history for a governance policy | Admin |
+| `POST` | `/policies/:name/rollback/:version` | Re-activate an older version's value as a new version | Admin |
+| `GET` | `/reports` | List generated compliance report records | Admin |
+| `POST` \| `GET` | `/reports` \| `/report` \| `/reports/export?format=csv\|json\|pdf` | Run a fresh assessment and stream a report in the requested format | Admin |
+| `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Same report generation, via a dedicated path per format | Admin |
 
 **Upload Request:**
 ```json

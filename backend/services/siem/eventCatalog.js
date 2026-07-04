@@ -58,12 +58,26 @@ export const TYPE_META = {
   step_up_auth: { siemType: "STEP_UP_AUTH", severity: "MEDIUM", category: "IAM", label: "Step-Up Authentication" },
 
   // --- New types (Phase 9.5: Adaptive Authentication) ---
-  impossible_travel: { siemType: "IMPOSSIBLE_TRAVEL", severity: "CRITICAL", category: "IAM", label: "Impossible Travel" }
+  impossible_travel: { siemType: "IMPOSSIBLE_TRAVEL", severity: "CRITICAL", category: "IAM", label: "Impossible Travel" },
+
+  // --- New types (Phase 10: Compliance & Governance) ---
+  compliance_scan: { siemType: "COMPLIANCE_SCAN", severity: "INFO", category: "COMPLIANCE", label: "Compliance Scan Run" },
+  control_passed: { siemType: "CONTROL_PASSED", severity: "INFO", category: "COMPLIANCE", label: "Compliance Control Passed" },
+  control_failed: { siemType: "CONTROL_FAILED", severity: "HIGH", category: "COMPLIANCE", label: "Compliance Control Failed" },
+  policy_updated: { siemType: "POLICY_UPDATED", severity: "LOW", category: "COMPLIANCE", label: "Compliance Policy Updated" },
+  compliance_policy_violation: { siemType: "POLICY_VIOLATION", severity: "MEDIUM", category: "COMPLIANCE", label: "Compliance Policy Violation" },
+  report_generated: { siemType: "REPORT_GENERATED", severity: "INFO", category: "COMPLIANCE", label: "Compliance Report Generated" },
+  evidence_collected: { siemType: "EVIDENCE_COLLECTED", severity: "INFO", category: "COMPLIANCE", label: "Compliance Evidence Collected" },
+  // Phase 10 continuation: overall-run-level pass/fail verdicts (distinct from the per-control
+  // control_passed/control_failed above) and a framework-level configuration-change event.
+  compliance_failed: { siemType: "COMPLIANCE_FAILED", severity: "HIGH", category: "COMPLIANCE", label: "Compliance Run Failed" },
+  compliance_passed: { siemType: "COMPLIANCE_PASSED", severity: "INFO", category: "COMPLIANCE", label: "Compliance Run Passed" },
+  framework_updated: { siemType: "FRAMEWORK_UPDATED", severity: "LOW", category: "COMPLIANCE", label: "Compliance Framework Updated" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE"
 ];
 
 export function resolveEventMeta(type) {

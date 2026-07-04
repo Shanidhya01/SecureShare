@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bell, ChevronRight, LogOut, Menu, Settings, ShieldCheck, User as UserIcon } from "lucide-react";
+import { Bell, ChevronRight, ClipboardCheck, LogOut, Menu, Settings, ShieldCheck, User as UserIcon } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { navItems } from "./navItems";
@@ -157,6 +157,9 @@ export default function Topbar() {
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/security")}>
                 <ShieldCheck size={14} /> Security Center
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/compliance")}>
+                <ClipboardCheck size={14} /> Compliance Center
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={logout}>

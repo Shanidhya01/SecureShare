@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import cron from "node-cron";
 
 import authRoutes from "./routes/auth.routes.js";
 import fileRoutes from "./routes/file.routes.js";
@@ -18,9 +19,13 @@ import mfaRoutes from "./routes/mfa.routes.js";
 import passkeyRoutes, { passkeyLoginRouter } from "./routes/passkey.routes.js";
 import iamRoutes from "./routes/iam.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
+import complianceRoutes from "./routes/compliance.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
 import { ensureSeedPlaybooks } from "./services/soar/seedPlaybooks.js";
+import { ensureSeedFrameworks } from "./services/compliance/seedFrameworks.js";
+import { runAssessment } from "./services/compliance/complianceEngine.js";
+import User from "./models/User.js";
 
 dotenv.config();
 
@@ -39,6 +44,8 @@ if (!process.env.MONGO_URI) {
       console.log("MongoDB connected");
       ensureSeedRules().catch((err) => console.error("Failed to seed YARA rules:", err.message));
       ensureSeedPlaybooks().catch((err) => console.error("Failed to seed SOAR playbooks:", err.message));
+      ensureSeedFrameworks().catch((err) => console.error("Failed to seed compliance frameworks:", err.message));
+      scheduleDailyComplianceScan();
     })
     .catch((err) => console.error("MongoDB connection error:", err.message));
 }
@@ -62,7 +69,25 @@ app.use("/api/mfa", mfaRoutes);
 app.use("/api/passkeys", passkeyRoutes);
 app.use("/api/auth/passkey", passkeyLoginRouter);
 app.use("/api/iam", iamRoutes);
+app.use("/api/compliance", complianceRoutes);
 app.use("/api", ipRoutes);
+
+// Phase 10 (Compliance & Governance): continuous compliance - re-run the full assessment once a
+// day at 03:00 server time, using `node-cron` (already a dependency, previously only wired up in
+// the unused backend/cron/cleanup.js). Attributed to the first admin account found so the
+// resulting SIEM events have a valid `owner` (SecurityEvent.owner is required); silently skipped
+// if no admin exists yet.
+function scheduleDailyComplianceScan() {
+  cron.schedule("0 3 * * *", async () => {
+    try {
+      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      if (!admin) return;
+      await runAssessment({ owner: admin._id });
+    } catch (err) {
+      console.error("Scheduled compliance scan failed:", err.message);
+    }
+  });
+}
 
 // Root and health endpoints
 app.get("/", (req, res) => {

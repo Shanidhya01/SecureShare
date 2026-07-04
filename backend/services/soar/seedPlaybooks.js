@@ -9,7 +9,13 @@ import AutomationRule from "../../models/AutomationRule.js";
 
 export async function ensureSeedPlaybooks() {
   const count = await Playbook.countDocuments();
-  if (count > 0) return;
+  if (count > 0) {
+    // Playbooks already seeded on a prior deploy - top up the Phase 10 continuation's playbook/
+    // rules without touching anything an admin may have since edited, same idempotent-top-up
+    // pattern as services/compliance/seedFrameworks.js's ensureAdditionalControls().
+    await ensureAdditionalComplianceAutomation();
+    return;
+  }
 
   const playbooks = await Playbook.insertMany([
     {
@@ -81,6 +87,9 @@ export async function ensureSeedPlaybooks() {
         { type: "notifyUser", params: { title: "Unusual sign-in activity detected on your account", severity: "CRITICAL" }, continueOnFailure: true }
       ]
     }
+    // "Compliance Failure Response" is created by ensureAdditionalComplianceAutomation() below,
+    // called on every ensureSeedPlaybooks() run (not just the first) so it's a single source of
+    // truth regardless of whether this is a fresh database or one seeded before Phase 10 existed.
   ]);
 
   const byName = Object.fromEntries(playbooks.map((p) => [p.name, p]));
@@ -96,5 +105,47 @@ export async function ensureSeedPlaybooks() {
     { name: "Auto-respond to repeated failed logins", trigger: "MULTIPLE_FAILED_LOGINS", playbookId: byName["Account Lockdown Response"]._id, priority: 10 },
     { name: "Auto-respond to impossible travel", trigger: "IMPOSSIBLE_TRAVEL", playbookId: byName["Critical Risk Response"]._id, priority: 5 },
     { name: "Auto-respond to critical-risk logins", trigger: "CRITICAL_RISK_LOGIN", playbookId: byName["Critical Risk Response"]._id, priority: 5 }
+    // "Auto-respond to compliance score drops" and the continuous-compliance recheck rules are
+    // created by ensureAdditionalComplianceAutomation() below, called on every start (not just
+    // the first) so they're also picked up on databases that seeded before Phase 10 existed.
   ]);
+
+  await ensureAdditionalComplianceAutomation();
+}
+
+/**
+ * Phase 10 continuation: idempotently ensures the "Compliance Failure Response" playbook (and its
+ * COMPLIANCE_SCORE_DROP rule) exist even on a database that had already seeded Phase 8's original
+ * playbooks before Phase 10 existed, plus three lightweight "recheck compliance" rules attached to
+ * existing triggers (malware detection, DLP violation, critical MITRE technique / SIEM-critical)
+ * for continuous compliance - reuses the triggers those phases already emit, no ruleMatcher.js
+ * changes needed. Every insert here is guarded individually so it's safe to call on every start.
+ */
+async function ensureAdditionalComplianceAutomation() {
+  let playbook = await Playbook.findOne({ name: "Compliance Failure Response" });
+  if (!playbook) {
+    playbook = await Playbook.create({
+      name: "Compliance Failure Response",
+      description: "Phase 10: raises an incident, notifies admins, assigns the failing controls to a reviewer, and re-runs the assessment when overall compliance score drops or a CRITICAL control fails.",
+      category: "Compliance Failure Response",
+      steps: [
+        { type: "raiseIncident", params: { title: "Compliance score dropped", severity: "HIGH" }, continueOnFailure: true },
+        { type: "notifyAdmin", params: { title: "Compliance failure detected", severity: "HIGH" }, continueOnFailure: true },
+        { type: "assignComplianceOwner", params: {}, continueOnFailure: true },
+        { type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }
+      ]
+    });
+  }
+
+  const additionalRules = [
+    { name: "Auto-respond to compliance score drops", trigger: "COMPLIANCE_SCORE_DROP", playbookId: playbook._id, priority: 10 },
+    { name: "Recheck compliance after malware detection", trigger: "THREAT_FOUND", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 },
+    { name: "Recheck compliance after DLP violation", trigger: "DLP_BLOCK", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 },
+    { name: "Recheck compliance after critical MITRE technique", trigger: "MITRE_CRITICAL", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 }
+  ];
+
+  for (const rule of additionalRules) {
+    const exists = await AutomationRule.exists({ name: rule.name });
+    if (!exists) await AutomationRule.create(rule);
+  }
 }

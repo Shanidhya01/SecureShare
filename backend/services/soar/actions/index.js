@@ -19,6 +19,9 @@ import sendEmail from "./sendEmail.js";
 import generateSiemEvent from "./generateSiemEvent.js";
 import generateAuditLog from "./generateAuditLog.js";
 import requireMfaStepUp from "./requireMfaStepUp.js";
+import generateComplianceReport from "./generateComplianceReport.js";
+import assignComplianceOwner from "./assignComplianceOwner.js";
+import rerunComplianceAssessment from "./rerunComplianceAssessment.js";
 
 export const ACTION_HANDLERS = {
   quarantineFile,
@@ -34,7 +37,10 @@ export const ACTION_HANDLERS = {
   sendEmail,
   generateSiemEvent,
   generateAuditLog,
-  requireMfaStepUp
+  requireMfaStepUp,
+  generateComplianceReport,
+  assignComplianceOwner,
+  rerunComplianceAssessment
 };
 
 export const ACTION_TYPES = Object.keys(ACTION_HANDLERS);

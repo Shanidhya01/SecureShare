@@ -38,7 +38,9 @@ const automationRuleSchema = new mongoose.Schema(
         "THREAT_FOUND", "IOC_MATCH", "DLP_BLOCK", "SIGNATURE_FAILED", "SESSION_COMPROMISED",
         "NEW_DEVICE", "MULTIPLE_FAILED_LOGINS", "YARA_MATCH", "MITRE_CRITICAL",
         // Phase 9.5: Adaptive Authentication
-        "IMPOSSIBLE_TRAVEL", "CRITICAL_RISK_LOGIN"
+        "IMPOSSIBLE_TRAVEL", "CRITICAL_RISK_LOGIN",
+        // Phase 10: Compliance & Governance
+        "COMPLIANCE_SCORE_DROP"
       ]
     },
     conditions: { type: [conditionSchema], default: [] },

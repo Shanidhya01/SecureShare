@@ -90,6 +90,32 @@ Sharpens Phase 9's risk engine and, importantly, fixes two policies that phase d
 
 **What Phase 9.5 does not do**: it does not add a commercial-grade IP intelligence or geolocation integration (documented as a deployment-time extension point, not a built-in guarantee). It does not retroactively enforce the new password policy against existing accounts. It does not change what a JWT looks like, how sessions are revoked, or any Phase 1-9 detection/crypto logic.
 
+### Enterprise Compliance & Governance (Phase 10)
+
+A read-only governance layer over Phases 1-9.5 - it evaluates and reports on the state of existing controls, it does not itself enforce anything new. No detection, crypto, or auth code path was modified to build it.
+
+**Evidence lifecycle**: every `runAssessment()` call builds one shared context from live queries (`File`, `User`, `SecurityEvent`, `Incident`, `AutomationRule`/`AutomationExecution`, `SecurityPolicy`), runs each control's evaluator against it, and persists both a `ComplianceAssessment` (score/status/recommendations) and a `ComplianceEvidence` document linking the control to the data that justified the verdict. Evidence is retained indefinitely and can be marked `approved` by an admin (`POST /api/compliance/evidence/:id/approve`) as a lightweight review trail - approval is advisory, it does not change the assessment's score.
+
+**Control catalog is representative, not exhaustive**: `services/compliance/seedFrameworks.js` seeds real, correctly-mapped controls (ISO 27001, SOC 2, GDPR, HIPAA, PCI DSS, NIST CSF, CIS Controls, OWASP ASVS) but intentionally does not attempt each framework's full published control set. This is stated here so the compliance score is understood as "how well SecureShare's actual capabilities satisfy a curated sample of each framework's requirements," not a certified audit result.
+
+**Policy versioning, never mutation**: `CompliancePolicy` documents are never updated in place - every change to `FILE_RETENTION_DAYS`, `MAX_UPLOAD_SIZE_MB`, `BLOCKED_FILE_TYPES`, `RESTRICTED_COUNTRIES`, or `DLP_ENFORCEMENT` inserts a new document with an incremented `version`, so the full history of what the policy was at any point in time is preserved for audit purposes.
+
+**Deliberately does not duplicate SecurityPolicy**: MFA requirement, session timeout, password length, and allowed-countries settings already exist on Phase 9's `SecurityPolicy` singleton. Phase 10 reads them live via `evidenceCollector.js` rather than copying them into a second, potentially-divergent policy store.
+
+**SOAR integration reuses existing plumbing, not new triggers on the hot path**: `compliance_scan`/`control_failed` events go through the same `logSecurityEvent()` → SOAR-engine re-entry every other phase's events already use. The new `COMPLIANCE_SCORE_DROP` trigger and `generateComplianceReport` action are additive entries in the existing trigger enum and action registry - no change to `soarEngine.js`'s orchestration logic itself.
+
+**Admin-only, not per-user**: unlike `/identity` (a user's own account view), `/compliance` and every `/api/compliance/*` route require `requireAdmin` - this is org-wide governance data (aggregate scores, all users' MFA adoption, all files' encryption ratio), not something scoped to a single account.
+
+**What Phase 10 does not do**: it does not block uploads, logins, or downloads based on policy violations - `policyEvaluator.js`'s `evaluatePolicyViolations()` is evidence-only today, feeding scores and recommendations rather than gating Phase 3/4/5's existing enforcement paths (a documented follow-up, not an oversight - wiring a new hard block into the upload path was out of scope for an additive governance layer). It does not certify actual compliance with any framework; it is a continuous internal self-assessment tool.
+
+**Continuation - risk scoring is additive weighting, not a new judgment**: `services/compliance/riskScoring.js`'s `computeRiskScore()` only re-weights the same PASS/FAIL/PARTIAL verdicts and control severities the engine already produces; it introduces no new evaluation logic. A control's static `severity` (set at seed time) and its per-run `status` are the only inputs.
+
+**Continuation - policy approval is advisory, like evidence approval**: `CompliancePolicy.approvalStatus` (Phase 10 continuation) does not gate whether a policy version is "current" - `getCurrentPolicyValues()` still resolves to the highest-versioned *enabled* document regardless of approval state. Approval is a review/audit trail, not an activation gate, exactly like `ComplianceEvidence.approved`.
+
+**Continuation - rollback never deletes history**: `rollbackPolicy()` creates a brand-new version copying an older one's value; no `CompliancePolicy` document is ever mutated or removed, preserving the same append-only audit guarantee the original versioning design established.
+
+**Continuation - automation reuses existing triggers, not new hooks into core paths**: the "recheck compliance" rules attached to `THREAT_FOUND`/`DLP_BLOCK`/`MITRE_CRITICAL` are ordinary additional `AutomationRule` documents against triggers those phases already emit - no change to `soarEngine.js`, `ruleMatcher.js`'s trigger-detection logic, or the malware/DLP/threat-intel code that raises those events in the first place.
+
 ---
 
 ## Supported Algorithms

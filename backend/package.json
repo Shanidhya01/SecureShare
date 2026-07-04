@@ -26,6 +26,7 @@
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "otplib": "^13.4.1",
+    "pdfkit": "^0.19.1",
     "qrcode": "^1.5.4",
     "streamifier": "^0.1.1"
   },

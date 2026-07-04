@@ -4,9 +4,11 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { apiErrorStatus } from "@/lib/errors";
-import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn } from "lucide-react";
+import Link from "next/link";
+import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn, ClipboardCheck } from "lucide-react";
 import toast from "react-hot-toast";
 import { motion } from "framer-motion";
+import { getIsAdminFromToken } from "@/lib/auth";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
@@ -83,6 +85,7 @@ export default function SecurityCenterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const fetchAll = useCallback(async (token: string) => {
     try {
@@ -119,6 +122,7 @@ export default function SecurityCenterPage() {
       router.push("/login");
       return;
     }
+    setIsAdmin(getIsAdminFromToken(token));
     fetchAll(token);
   }, [fetchAll, router]);
 
@@ -228,7 +232,21 @@ export default function SecurityCenterPage() {
 
   return (
     <div>
-      <PageHeader icon={ShieldCheck} title="Security Center" description="Zero Trust device, session, and access controls for your account." />
+      <PageHeader
+        icon={ShieldCheck}
+        title="Security Center"
+        description="Zero Trust device, session, and access controls for your account."
+        actions={
+          isAdmin ? (
+            <Link
+              href="/compliance"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
+            >
+              <ClipboardCheck size={16} /> Compliance Center
+            </Link>
+          ) : undefined
+        }
+      />
 
       {error && (
         <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2">

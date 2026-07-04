@@ -12,6 +12,7 @@ import {
   Crosshair,
   Bot,
   Fingerprint,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,7 @@ export const navItems: NavItem[] = [
   { label: "Threat Intelligence", href: "/threat-intelligence", icon: Crosshair },
   { label: "SOAR", href: "/soar", icon: Bot },
   { label: "Identity & Access", href: "/identity", icon: Fingerprint },
+  { label: "Compliance", href: "/compliance", icon: ClipboardCheck },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
   { label: "Security Operations", href: "/soc", icon: Radar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },

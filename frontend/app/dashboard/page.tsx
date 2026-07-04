@@ -22,7 +22,9 @@ import {
   ScrollText,
   Download,
   Activity,
+  ClipboardCheck,
 } from "lucide-react";
+import { getIsAdminFromToken } from "@/lib/auth";
 import {
   AreaChart,
   Area,
@@ -75,6 +77,7 @@ type DLPStats = {
 
 type DeviceEntry = { deviceId: string; trusted: boolean };
 type SecurityEventEntry = { id: string; type: string; message: string; createdAt: string };
+type ComplianceDashboard = { overallScore: number; riskScore: number; controlCoverage: Record<string, number> };
 
 const RISK_COLORS: Record<string, string> = {
   Low: "#10B981",
@@ -90,6 +93,8 @@ export default function DashboardOverview() {
   const [dlpStats, setDlpStats] = useState<DLPStats | null>(null);
   const [devices, setDevices] = useState<DeviceEntry[]>([]);
   const [events, setEvents] = useState<SecurityEventEntry[]>([]);
+  const [compliance, setCompliance] = useState<ComplianceDashboard | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(
@@ -127,6 +132,16 @@ export default function DashboardOverview() {
       return;
     }
     fetchAll(token);
+
+    // Compliance is an admin-only area (see /api/compliance/*) - only fetch the summary widget
+    // for admins, so regular users never trigger a 403 against it.
+    if (getIsAdminFromToken(token)) {
+      setIsAdmin(true);
+      api
+        .get<ComplianceDashboard>("/compliance/dashboard", { headers: { Authorization: `Bearer ${token}` } })
+        .then((res) => setCompliance(res.data))
+        .catch(() => {});
+    }
   }, [fetchAll, router]);
 
   const trustedDevices = devices.filter((d) => d.trusted).length;
@@ -190,6 +205,7 @@ export default function DashboardOverview() {
     { label: "DLP Center", href: "/dlp", icon: Eye },
     { label: "Security Center", href: "/security", icon: ShieldCheck },
     { label: "Audit Logs", href: "/audit", icon: ScrollText },
+    ...(isAdmin ? [{ label: "Compliance Center", href: "/compliance", icon: ClipboardCheck }] : []),
   ];
 
   return (
@@ -211,12 +227,22 @@ export default function DashboardOverview() {
       {loading ? (
         <StatsSkeleton count={5} />
       ) : (
-        <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <motion.div variants={staggerContainer} initial="hidden" animate="show" className={`grid grid-cols-2 gap-4 ${isAdmin && compliance ? "lg:grid-cols-6" : "lg:grid-cols-5"}`}>
           <StatCard label="Protected Files" value={files.length} icon={FileText} variant="primary" />
           <StatCard label="Threats Blocked" value={threatStats?.malwareDetections ?? 0} icon={ShieldAlert} variant="danger" />
           <StatCard label="Trusted Devices" value={`${trustedDevices}/${devices.length}`} icon={Laptop} variant="success" />
           <StatCard label="DLP Alerts" value={dlpStats?.policyViolations ?? 0} icon={Eye} variant="purple" />
           <StatCard label="Quarantined Files" value={threatStats?.quarantinedFiles ?? quarantinedInFiles} icon={Ban} variant="warning" />
+          {isAdmin && compliance && (
+            <Link href="/compliance">
+              <StatCard
+                label="Compliance Score"
+                value={`${compliance.overallScore}/100`}
+                icon={ClipboardCheck}
+                variant={compliance.overallScore >= 85 ? "success" : compliance.overallScore >= 60 ? "warning" : "danger"}
+              />
+            </Link>
+          )}
         </motion.div>
       )}
 
