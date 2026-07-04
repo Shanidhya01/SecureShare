@@ -52,6 +52,16 @@ export function eventTriggerFor(event) {
       return "IOC_MATCH";
     case "security_score_updated":
       return event.metadata?.scoreDropped ? "CLOUD_SCORE_DROP" : null;
+    case "dependency_vulnerability":
+      return ["CRITICAL", "HIGH"].includes(event.metadata?.severity) ? "DEPENDENCY_VULNERABILITY_CRITICAL" : null;
+    case "secret_found":
+      return ["CRITICAL", "HIGH"].includes(event.metadata?.severity) ? "SECRET_FOUND_CRITICAL" : null;
+    case "container_vulnerability":
+      return ["CRITICAL", "HIGH"].includes(event.metadata?.severity) ? "CONTAINER_VULNERABILITY_CRITICAL" : null;
+    case "pipeline_blocked":
+      return "PIPELINE_BLOCKED";
+    case "high_risk_repository":
+      return "HIGH_RISK_REPOSITORY";
     case "mitre_mapping": {
       const techniques = event.metadata?.techniques || [];
       const isCritical = techniques.some((t) => CRITICAL_MITRE_TACTICS.includes(t.tactic));

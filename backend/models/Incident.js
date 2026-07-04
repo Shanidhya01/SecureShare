@@ -15,7 +15,7 @@ const incidentSchema = new mongoose.Schema({
 
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS"]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "MEDIUM" },
   status: { type: String, enum: ["open", "investigating", "resolved"], default: "open" },

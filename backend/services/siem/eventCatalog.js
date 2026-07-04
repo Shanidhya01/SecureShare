@@ -86,12 +86,25 @@ export const TYPE_META = {
   missing_security_headers: { siemType: "MISSING_SECURITY_HEADERS", severity: "MEDIUM", category: "CLOUD", label: "Missing Security Headers" },
   cloud_risk_updated: { siemType: "CLOUD_RISK_UPDATED", severity: "INFO", category: "CLOUD", label: "Cloud Risk Score Updated" },
   security_score_updated: { siemType: "SECURITY_SCORE_UPDATED", severity: "INFO", category: "CLOUD", label: "Overall Security Score Updated" },
-  cloud_ioc_match: { siemType: "CLOUD_IOC_MATCH", severity: "CRITICAL", category: "CLOUD", label: "Cloud Asset IOC Match" }
+  cloud_ioc_match: { siemType: "CLOUD_IOC_MATCH", severity: "CRITICAL", category: "CLOUD", label: "Cloud Asset IOC Match" },
+
+  // --- New types (Phase 12: DevSecOps / Software Supply Chain Security) ---
+  dependency_vulnerability: { siemType: "DEPENDENCY_VULNERABILITY", severity: "HIGH", category: "DEVSECOPS", label: "Dependency Vulnerability Found" },
+  secret_found: { siemType: "SECRET_FOUND", severity: "CRITICAL", category: "DEVSECOPS", label: "Secret Found in Source" },
+  sbom_generated: { siemType: "SBOM_GENERATED", severity: "INFO", category: "DEVSECOPS", label: "SBOM Generated" },
+  sast_finding: { siemType: "SAST_FINDING", severity: "HIGH", category: "DEVSECOPS", label: "SAST Finding" },
+  container_vulnerability: { siemType: "CONTAINER_VULNERABILITY", severity: "HIGH", category: "DEVSECOPS", label: "Container Vulnerability Found" },
+  pipeline_failed: { siemType: "PIPELINE_FAILED", severity: "MEDIUM", category: "DEVSECOPS", label: "Pipeline Failed" },
+  pipeline_blocked: { siemType: "PIPELINE_BLOCKED", severity: "HIGH", category: "DEVSECOPS", label: "Pipeline Blocked" },
+  high_risk_repository: { siemType: "HIGH_RISK_REPOSITORY", severity: "HIGH", category: "DEVSECOPS", label: "High Risk Repository" },
+  iac_misconfiguration: { siemType: "IAC_MISCONFIGURATION", severity: "MEDIUM", category: "DEVSECOPS", label: "IaC Misconfiguration" },
+  devsecops_scan: { siemType: "DEVSECOPS_SCAN", severity: "INFO", category: "DEVSECOPS", label: "DevSecOps Scan Run" },
+  devsecops_risk_updated: { siemType: "DEVSECOPS_RISK_UPDATED", severity: "INFO", category: "DEVSECOPS", label: "DevSecOps Risk Score Updated" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS"
 ];
 
 export function resolveEventMeta(type) {

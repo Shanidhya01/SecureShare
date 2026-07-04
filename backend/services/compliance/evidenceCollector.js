@@ -16,6 +16,7 @@ import AutomationExecution from "../../models/AutomationExecution.js";
 import { getPolicy } from "../../models/SecurityPolicy.js";
 import ComplianceEvidence from "../../models/ComplianceEvidence.js";
 import CloudFinding from "../../models/CloudFinding.js";
+import DevSecOpsFinding from "../../models/DevSecOpsFinding.js";
 import { getCurrentPolicyValues } from "./policyEvaluator.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -40,7 +41,8 @@ export async function buildComplianceContext() {
     totalDevices, trustedDevices, revokedDevices,
     riskEventsTotal, highRiskChallenged,
     signedFiles, hashedFiles,
-    openCriticalCloudFindings, openHighCloudFindings, totalOpenCloudFindings
+    openCriticalCloudFindings, openHighCloudFindings, totalOpenCloudFindings,
+    openCriticalDevSecOpsFindings, openHighDevSecOpsFindings, totalOpenDevSecOpsFindings
   ] = await Promise.all([
     File.countDocuments(),
     File.countDocuments({ encryptionVersion: { $gte: 2 } }),
@@ -77,7 +79,10 @@ export async function buildComplianceContext() {
     File.countDocuments({ fileHash: { $exists: true, $ne: null } }),
     CloudFinding.countDocuments({ status: "open", severity: "CRITICAL" }),
     CloudFinding.countDocuments({ status: "open", severity: "HIGH" }),
-    CloudFinding.countDocuments({ status: "open" })
+    CloudFinding.countDocuments({ status: "open" }),
+    DevSecOpsFinding.countDocuments({ status: "open", severity: "CRITICAL" }),
+    DevSecOpsFinding.countDocuments({ status: "open", severity: "HIGH" }),
+    DevSecOpsFinding.countDocuments({ status: "open" })
   ]);
 
   const inactiveUsers90d = Math.max(0, totalUsers - activeUsers90d.length);
@@ -112,6 +117,7 @@ export async function buildComplianceContext() {
     digitalSignature: { totalFiles, signedFiles },
     fileIntegrity: { totalFiles, hashedFiles },
     cloudSecurity: { openCritical: openCriticalCloudFindings, openHigh: openHighCloudFindings, totalOpen: totalOpenCloudFindings },
+    devSecOps: { openCritical: openCriticalDevSecOpsFindings, openHigh: openHighDevSecOpsFindings, totalOpen: totalOpenDevSecOpsFindings },
     _raw: { securityPolicy, compliancePolicyValues }
   };
 }
@@ -140,5 +146,6 @@ export const EVALUATOR_SOURCE_TYPE = {
   adaptiveAuthEvaluator: "SECURITY_EVENT",
   digitalSignatureEvaluator: "FILE_METADATA",
   fileIntegrityEvaluator: "FILE_METADATA",
-  cloudSecurityEvaluator: "SECURITY_EVENT"
+  cloudSecurityEvaluator: "SECURITY_EVENT",
+  devSecOpsEvaluator: "SECURITY_EVENT"
 };

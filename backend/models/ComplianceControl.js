@@ -27,7 +27,9 @@ const complianceControlSchema = new mongoose.Schema(
         "passwordPolicyEvaluator", "identityEvaluator", "deviceTrustEvaluator", "adaptiveAuthEvaluator",
         "digitalSignatureEvaluator", "fileIntegrityEvaluator",
         // Phase 11 (CSPM/ASM): cloud security posture findings feed into compliance scoring.
-        "cloudSecurityEvaluator"
+        "cloudSecurityEvaluator",
+        // Phase 12 (DevSecOps/Supply Chain): dependency/secret/SAST/container/IaC findings.
+        "devSecOpsEvaluator"
       ]
     },
     recommendation: String,

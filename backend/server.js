@@ -21,12 +21,14 @@ import iamRoutes from "./routes/iam.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import complianceRoutes from "./routes/compliance.routes.js";
 import cloudRoutes from "./routes/cloud.routes.js";
+import devsecopsRoutes from "./routes/devsecops.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
 import { ensureSeedPlaybooks } from "./services/soar/seedPlaybooks.js";
 import { ensureSeedFrameworks } from "./services/compliance/seedFrameworks.js";
 import { runAssessment } from "./services/compliance/complianceEngine.js";
 import { runCloudScan } from "./services/cloud/cloudScanOrchestrator.js";
+import { runDevSecOpsScan } from "./services/devsecops/devSecOpsOrchestrator.js";
 import User from "./models/User.js";
 
 dotenv.config();
@@ -50,6 +52,8 @@ if (!process.env.MONGO_URI) {
       scheduleDailyComplianceScan();
       scheduleDailyCloudScan();
       runStartupCloudScan();
+      scheduleDailyDevSecOpsScan();
+      runStartupDevSecOpsScan();
     })
     .catch((err) => console.error("MongoDB connection error:", err.message));
 }
@@ -75,6 +79,7 @@ app.use("/api/auth/passkey", passkeyLoginRouter);
 app.use("/api/iam", iamRoutes);
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/cloud", cloudRoutes);
+app.use("/api/devsecops", devsecopsRoutes);
 app.use("/api", ipRoutes);
 
 // Phase 10 (Compliance & Governance): continuous compliance - re-run the full assessment once a
@@ -122,6 +127,35 @@ function runStartupCloudScan() {
       console.error("Startup cloud scan failed:", err.message);
     }
   }, 10000);
+}
+
+// Phase 12 (DevSecOps/Supply Chain): continuous supply-chain scanning - one daily scan (offset
+// from Compliance's 03:00 and Cloud's 04:00 slots) plus a one-off scan ~10s after every server
+// startup, both attributed to the first admin account, exactly mirroring Phase 11's cloud-scan
+// scheduling pattern. The startup scan skips the live npm-registry "outdated version" check
+// (checkLiveDependencies: false) so server boot never depends on network reachability.
+function scheduleDailyDevSecOpsScan() {
+  cron.schedule("0 5 * * *", async () => {
+    try {
+      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      if (!admin) return;
+      await runDevSecOpsScan({ owner: admin._id });
+    } catch (err) {
+      console.error("Scheduled DevSecOps scan failed:", err.message);
+    }
+  });
+}
+
+function runStartupDevSecOpsScan() {
+  setTimeout(async () => {
+    try {
+      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      if (!admin) return;
+      await runDevSecOpsScan({ owner: admin._id, checkLiveDependencies: false });
+    } catch (err) {
+      console.error("Startup DevSecOps scan failed:", err.message);
+    }
+  }, 15000);
 }
 
 // Root and health endpoints

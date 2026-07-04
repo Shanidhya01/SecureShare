@@ -15,6 +15,7 @@ export async function ensureSeedPlaybooks() {
     // pattern as services/compliance/seedFrameworks.js's ensureAdditionalControls().
     await ensureAdditionalComplianceAutomation();
     await ensureAdditionalCloudAutomation();
+    await ensureAdditionalDevSecOpsAutomation();
     return;
   }
 
@@ -113,6 +114,7 @@ export async function ensureSeedPlaybooks() {
 
   await ensureAdditionalComplianceAutomation();
   await ensureAdditionalCloudAutomation();
+  await ensureAdditionalDevSecOpsAutomation();
 }
 
 /**
@@ -179,6 +181,44 @@ async function ensureAdditionalComplianceAutomation() {
     { name: "Recheck compliance after malware detection", trigger: "THREAT_FOUND", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 },
     { name: "Recheck compliance after DLP violation", trigger: "DLP_BLOCK", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 },
     { name: "Recheck compliance after critical MITRE technique", trigger: "MITRE_CRITICAL", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 }
+  ];
+
+  for (const rule of additionalRules) {
+    const exists = await AutomationRule.exists({ name: rule.name });
+    if (!exists) await AutomationRule.create(rule);
+  }
+}
+
+/**
+ * Phase 12 (DevSecOps/Supply Chain): idempotently ensures a "Supply Chain Incident Response"
+ * playbook (and its DEPENDENCY_VULNERABILITY_CRITICAL/SECRET_FOUND_CRITICAL/
+ * CONTAINER_VULNERABILITY_CRITICAL/PIPELINE_BLOCKED/HIGH_RISK_REPOSITORY rules) exist, called on
+ * every ensureSeedPlaybooks() run - same guarded-insert pattern as the two functions above.
+ */
+async function ensureAdditionalDevSecOpsAutomation() {
+  let playbook = await Playbook.findOne({ name: "Supply Chain Incident Response" });
+  if (!playbook) {
+    playbook = await Playbook.create({
+      name: "Supply Chain Incident Response",
+      description: "Phase 12: raises an incident, notifies admins, records an advisory deployment block, re-runs the DevSecOps scan, and generates a report for a critical dependency/secret/container finding, a blocked pipeline, or a high-risk repository.",
+      category: "Supply Chain Incident Response",
+      steps: [
+        { type: "raiseIncident", params: { title: "Software supply chain risk detected", severity: "CRITICAL" }, continueOnFailure: true },
+        { type: "notifyAdmin", params: { title: "Software supply chain risk detected", severity: "CRITICAL" }, continueOnFailure: true },
+        { type: "blockDeployment", params: {}, continueOnFailure: true },
+        { type: "rerunDevSecOpsScan", params: {}, continueOnFailure: true },
+        { type: "generateDevSecOpsReport", params: {}, continueOnFailure: true }
+      ]
+    });
+  }
+
+  const additionalRules = [
+    { name: "Auto-respond to critical dependency vulnerabilities", trigger: "DEPENDENCY_VULNERABILITY_CRITICAL", playbookId: playbook._id, priority: 10 },
+    { name: "Auto-respond to critical secrets found", trigger: "SECRET_FOUND_CRITICAL", playbookId: playbook._id, priority: 5 },
+    { name: "Auto-respond to critical container vulnerabilities", trigger: "CONTAINER_VULNERABILITY_CRITICAL", playbookId: playbook._id, priority: 10 },
+    { name: "Auto-respond to blocked pipelines", trigger: "PIPELINE_BLOCKED", playbookId: playbook._id, priority: 10 },
+    { name: "Auto-respond to high-risk repositories", trigger: "HIGH_RISK_REPOSITORY", playbookId: playbook._id, priority: 10 },
+    { name: "Recheck compliance after supply chain incident", trigger: "SECRET_FOUND_CRITICAL", actions: [{ type: "rerunComplianceAssessment", params: {}, continueOnFailure: true }], priority: 90 }
   ];
 
   for (const rule of additionalRules) {

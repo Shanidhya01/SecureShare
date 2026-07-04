@@ -48,3 +48,50 @@ SecureShare is a single-tenant, self-hosted application with no multi-cloud acco
 **Data model**: `Asset` (inventory) → `CloudFinding` (category: CONFIGURATION | EXPOSURE | CERTIFICATE | THREAT_INTEL, optionally linked to an `Asset`) → `SecurityScoreSnapshot` (one per scan run, backing the dashboard's trend chart) - the same "current state + append-only history" shape Phase 10's `ComplianceControl`/`ComplianceAssessment` already established.
 
 For the full endpoint list, SIEM event catalog, and SOAR trigger wiring, see [README.md's Phase 11 section](README.md#%EF%B8%8F-phase-11-cloud-security-posture-management--attack-surface-management) and [CHANGELOG.md](CHANGELOG.md).
+
+## Phase 12: Enterprise DevSecOps & Software Supply Chain Security
+
+Same self-referential principle one layer down the stack: there is no real multi-repo GitHub org, CVE feed, or CI system to integrate with, so Phase 12 scans SecureShare's own git repository, dependency manifests, source tree, Dockerfile, and docker-compose.yml.
+
+```
+                        ┌──────────────────────────────┐
+                        │  devSecOpsOrchestrator.js    │
+                        │     runDevSecOpsScan()       │
+                        └───────────────┬──────────────┘
+                                        │
+   ┌────────────┬────────────┬─────────┼─────────┬────────────┬────────────┐
+   ▼            ▼            ▼         ▼         ▼            ▼            ▼
+repository  dependency    secret      sast    container      iac      pipeline +
+ Scanner     Scanner     Scanner    Scanner    Scanner     Scanner   artifactSecurity
+   │            │            │         │         │            │            │
+   ▼            ▼            ▼         ▼         ▼            ▼            ▼
+Repository  DevSecOpsFinding (category: DEPENDENCY|SECRET|SAST|CONTAINER|IAC)  PipelineRun
+                                                                            ArtifactSignature
+   │            │            │         │         │            │            │
+   └────────────┴────────────┴─────────┴─────────┴────────────┴────────────┘
+                                        │
+                                        ▼
+                                riskEngine.js
+                       (Repository/Dependency/Secret/
+                          Container/Pipeline scores)
+                                        │
+                                        ▼
+                          DevSecOpsScoreSnapshot
+                                        │
+                                        ▼
+                    logSecurityEvent() ──▶ SIEM correlation ──▶ SOAR engine
+                                        │                            │
+                                        ▼                            ▼
+                       devSecOpsEvaluator              "Supply Chain Incident Response"
+                    (lowers ISO27001/SOC2/NIST/          playbook (raise incident, notify
+                     PCI DSS/CIS/OWASP scores)           admin, advisory deployment block,
+                                                          rerun scan, generate report)
+```
+
+**Trigger points**: daily `node-cron` (05:00, offset from Compliance's 03:00 and Cloud's 04:00), a startup scan (~15s after Mongo connects, skipping the live npm-registry check), and `POST /api/devsecops/scan` for manual/CI-CD-triggered runs.
+
+**Self-scan boundary**: every scanner reads this repo's own files (`git` commands, `package.json`/`package-lock.json`, source tree, `Dockerfile`, `docker-compose.yml`) - none accepts an external target, and none calls a real CVE/NVD database or container registry. `secretScanner.js`/`sastScanner.js` additionally exclude their own `backend/services/devsecops/` implementation from the scan, since their rule definitions' descriptive text/patterns would otherwise trivially self-match.
+
+**Data model**: `Repository` (one self-scanned row) + `DevSecOpsFinding` (category: DEPENDENCY | SECRET | SAST | CONTAINER | IAC | PIPELINE) + `SBOMDocument`/`PipelineRun`/`ArtifactSignature` → `DevSecOpsScoreSnapshot` (one per scan run, backing the dashboard's trend chart) - the same "current state + append-only history" shape Phase 10/11 already established.
+
+For the full endpoint list, SIEM event catalog, and SOAR trigger wiring, see [README.md's Phase 12 section](README.md#%EF%B8%8F-phase-12-enterprise-devsecops--software-supply-chain-security), [API.md](API.md), and [CHANGELOG.md](CHANGELOG.md).

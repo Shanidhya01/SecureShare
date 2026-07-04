@@ -36,7 +36,11 @@ const securityEventSchema = new mongoose.Schema({
       "asset_discovered", "asset_updated", "configuration_scan", "configuration_failure",
       "public_exposure", "weak_tls", "certificate_expiring", "certificate_expired",
       "missing_security_headers", "cloud_risk_updated", "security_score_updated",
-      "cloud_ioc_match"
+      "cloud_ioc_match",
+      // Phase 12: DevSecOps / Software Supply Chain Security
+      "dependency_vulnerability", "secret_found", "sbom_generated", "sast_finding",
+      "container_vulnerability", "pipeline_failed", "pipeline_blocked", "high_risk_repository",
+      "iac_misconfiguration", "devsecops_scan", "devsecops_risk_updated"
     ]
   },
   message: String,
@@ -80,13 +84,17 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 11: CSPM / Attack Surface Management
       "ASSET_DISCOVERED", "ASSET_UPDATED", "CONFIGURATION_SCAN", "CONFIGURATION_FAILURE",
       "PUBLIC_EXPOSURE", "WEAK_TLS", "CERTIFICATE_EXPIRING", "CERTIFICATE_EXPIRED",
-      "MISSING_SECURITY_HEADERS", "CLOUD_RISK_UPDATED", "SECURITY_SCORE_UPDATED", "CLOUD_IOC_MATCH"
+      "MISSING_SECURITY_HEADERS", "CLOUD_RISK_UPDATED", "SECURITY_SCORE_UPDATED", "CLOUD_IOC_MATCH",
+      // Phase 12: DevSecOps / Software Supply Chain Security
+      "DEPENDENCY_VULNERABILITY", "SECRET_FOUND", "SBOM_GENERATED", "SAST_FINDING",
+      "CONTAINER_VULNERABILITY", "PIPELINE_FAILED", "PIPELINE_BLOCKED", "HIGH_RISK_REPOSITORY",
+      "IAC_MISCONFIGURATION", "DEVSECOPS_SCAN", "DEVSECOPS_RISK_UPDATED"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

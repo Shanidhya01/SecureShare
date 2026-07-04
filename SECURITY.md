@@ -128,6 +128,24 @@ A self-scanning layer over SecureShare's own deployment, not a multi-cloud inven
 
 **What Phase 11 does not do**: it does not perform network port scanning against arbitrary hosts, does not call out to any cloud provider API, and does not block uploads/logins/downloads - like Phase 10, it is a continuous self-assessment layer, not an enforcement gate.
 
+### Enterprise DevSecOps & Software Supply Chain Security (Phase 12)
+
+A self-scanning layer over SecureShare's own repository, dependencies, source code, container, and CI/CD config - not a connector to a real GitHub org, CVE feed, or CI system, since none exist for this project to integrate with.
+
+**Secrets are never exfiltrated, even to our own database**: `secretScanner.js` persists only a masked preview (`abcd...wxyz`) and rule metadata for any match, never the full matched value - the same masking discipline DLP's detectors already use. `.env`/`.env.production` (this deployment's real, live secrets) are deliberately excluded from scanning entirely - persisting even a masked preview of a real production secret into the findings collection would be a worse exposure surface than not scanning the file at all.
+
+**Self-matching is explicitly excluded, not silently wrong**: the SAST and secret scanners' own rule definitions describe what they detect in prose (e.g. a rule titled "Use of eval()", a pattern literally containing `-----BEGIN ... PRIVATE KEY-----`) - scanning `backend/services/devsecops/` itself would trivially flag that descriptive text as a finding about itself. Both scanners exclude that directory from their own source-file walk for this reason, discovered and fixed during this phase's own manual verification pass.
+
+**Container/IaC scanning is static analysis only**: `containerScanner.js` and `iacScanner.js` never build, pull, or run any image - they parse the `Dockerfile`/`docker-compose.yml` text directly, the same static-analysis approach as `services/cloud/configScanner.js`.
+
+**Artifact "signing" is HMAC integrity, not a code-signing certificate**: `artifactSecurity.js` signs an artifact's SHA-256 hash with an HMAC keyed on the app's existing `JWT_SECRET` - this proves the hash wasn't altered by someone without that secret, which is a real tamper-detection guarantee, but it is explicitly not the same trust model as a PKI-backed code-signing certificate (no independent, third-party-verifiable identity is attached to the signature).
+
+**Findings feed existing pipelines, not a new one**: every Phase 12 finding is either a `DevSecOpsFinding` document (dependency/secret/SAST/container/IaC/pipeline) or a `SecurityEvent` logged through the same `logSecurityEvent()` every other phase uses. A new `devSecOpsEvaluator` reads open CRITICAL/HIGH `DevSecOpsFinding`s directly inside the existing Compliance evidence context, so supply-chain posture lowers compliance scores without a second scoring system.
+
+**"Block Deployment" is honestly advisory**: the SOAR `blockDeployment` action records a flag on the triggering finding and logs the event - it does not (and cannot) halt a real CI/CD pipeline, because this project has none configured. This is stated explicitly rather than implied, matching Phase 11's "does not do" precedent below.
+
+**What Phase 12 does not do**: it does not scan or build container images, does not call any real CVE database/NVD API (the dependency/base-image advisory tables are small, curated, offline lists), does not enforce a real deployment gate, and does not certify supply-chain compliance with any standard - it is a continuous internal self-assessment tool, like Phase 10 and Phase 11.
+
 ---
 
 ## Supported Algorithms
@@ -169,6 +187,7 @@ A self-scanning layer over SecureShare's own deployment, not a multi-cloud inven
 - Accidental upload of files containing embedded secrets or PII in supported text formats (Phase 5), to the extent the configured detectors can recognize them.
 - Lack of visibility into related, multi-step suspicious activity (e.g. a quarantined file later targeted for download) — Phase 6's correlation engine surfaces this as a single incident instead of disconnected log rows.
 - Configuration drift and exposed attack surface in SecureShare's own deployment (missing security headers, expiring certificates, publicly reachable debug/admin paths) — Phase 11's CSPM/ASM scanner continuously re-checks these rather than relying on a one-time manual review.
+- Software supply chain risk in SecureShare's own codebase (known-deprecated/typosquat dependencies, hardcoded secrets, common code-level vulnerability patterns, insecure container/IaC configuration, missing CI/CD security gates) — Phase 12's DevSecOps scanner continuously re-checks these against the real repository rather than a one-time manual review.
 
 ### Out of scope (known, accepted limitations)
 - A compromised client device/browser at the moment of encryption, decryption, or signing — the endpoint holding key material in memory during that operation is inherently trusted for that operation.

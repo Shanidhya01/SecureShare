@@ -42,7 +42,10 @@ const automationRuleSchema = new mongoose.Schema(
         // Phase 10: Compliance & Governance
         "COMPLIANCE_SCORE_DROP",
         // Phase 11: CSPM / Attack Surface Management
-        "PUBLIC_EXPOSURE_CRITICAL", "CERTIFICATE_EXPIRED", "CLOUD_SCORE_DROP"
+        "PUBLIC_EXPOSURE_CRITICAL", "CERTIFICATE_EXPIRED", "CLOUD_SCORE_DROP",
+        // Phase 12: DevSecOps / Software Supply Chain Security
+        "DEPENDENCY_VULNERABILITY_CRITICAL", "SECRET_FOUND_CRITICAL", "CONTAINER_VULNERABILITY_CRITICAL",
+        "PIPELINE_BLOCKED", "HIGH_RISK_REPOSITORY"
       ]
     },
     conditions: { type: [conditionSchema], default: [] },

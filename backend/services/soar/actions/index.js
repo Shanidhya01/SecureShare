@@ -24,6 +24,9 @@ import assignComplianceOwner from "./assignComplianceOwner.js";
 import rerunComplianceAssessment from "./rerunComplianceAssessment.js";
 import rerunCloudScan from "./rerunCloudScan.js";
 import generateCloudReport from "./generateCloudReport.js";
+import blockDeployment from "./blockDeployment.js";
+import rerunDevSecOpsScan from "./rerunDevSecOpsScan.js";
+import generateDevSecOpsReport from "./generateDevSecOpsReport.js";
 
 export const ACTION_HANDLERS = {
   quarantineFile,
@@ -44,7 +47,10 @@ export const ACTION_HANDLERS = {
   assignComplianceOwner,
   rerunComplianceAssessment,
   rerunCloudScan,
-  generateCloudReport
+  generateCloudReport,
+  blockDeployment,
+  rerunDevSecOpsScan,
+  generateDevSecOpsReport
 };
 
 export const ACTION_TYPES = Object.keys(ACTION_HANDLERS);

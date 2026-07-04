@@ -257,6 +257,27 @@ function cloudSecurityEvaluator_impl(context) {
   return { status, score, details: { openCritical, openHigh, totalOpen }, recommendations };
 }
 
+/** Phase 12 (DevSecOps/Supply Chain) PART 16: lowers compliance score whenever open dependency/
+ *  secret/SAST/container/IaC findings exist - mirrors cloudSecurityEvaluator_impl's shape exactly. */
+function devSecOpsEvaluator_impl(context) {
+  const { openCritical = 0, openHigh = 0, totalOpen = 0 } = context.devSecOps || {};
+  if (totalOpen === 0) return { status: "PASS", score: 100, details: { openCritical, openHigh, totalOpen }, recommendations: [] };
+
+  if (openCritical > 0) {
+    return {
+      status: "FAIL",
+      score: clampScore(100 - openCritical * 25 - openHigh * 10),
+      details: { openCritical, openHigh, totalOpen },
+      recommendations: ["Remediate open CRITICAL DevSecOps findings (secrets, dependencies, container/IaC misconfigurations) immediately - see the DevSecOps dashboard."]
+    };
+  }
+
+  const score = clampScore(100 - openHigh * 10 - totalOpen * 2);
+  const status = verdictFromScore(score, { partialAt: 60, passAt: 90 });
+  const recommendations = status !== "PASS" ? ["Resolve outstanding dependency/secret/SAST/container/IaC findings from the DevSecOps scanner."] : [];
+  return { status, score, details: { openCritical, openHigh, totalOpen }, recommendations };
+}
+
 export const encryptionEvaluator = withEvaluatorMeta(encryptionEvaluator_impl);
 export const mfaEvaluator = withEvaluatorMeta(mfaEvaluator_impl);
 export const threatDetectionEvaluator = withEvaluatorMeta(threatDetectionEvaluator_impl);
@@ -275,6 +296,7 @@ export const adaptiveAuthEvaluator = withEvaluatorMeta(adaptiveAuthEvaluator_imp
 export const digitalSignatureEvaluator = withEvaluatorMeta(digitalSignatureEvaluator_impl);
 export const fileIntegrityEvaluator = withEvaluatorMeta(fileIntegrityEvaluator_impl);
 export const cloudSecurityEvaluator = withEvaluatorMeta(cloudSecurityEvaluator_impl);
+export const devSecOpsEvaluator = withEvaluatorMeta(devSecOpsEvaluator_impl);
 
 export const EVALUATORS = {
   encryptionEvaluator,
@@ -294,5 +316,6 @@ export const EVALUATORS = {
   adaptiveAuthEvaluator,
   digitalSignatureEvaluator,
   fileIntegrityEvaluator,
-  cloudSecurityEvaluator
+  cloudSecurityEvaluator,
+  devSecOpsEvaluator
 };

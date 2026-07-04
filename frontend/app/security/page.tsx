@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { apiErrorStatus } from "@/lib/errors";
 import Link from "next/link";
-import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn, ClipboardCheck } from "lucide-react";
+import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn, ClipboardCheck, Cloud, ShieldHalf } from "lucide-react";
 import toast from "react-hot-toast";
 import { motion } from "framer-motion";
 import { getIsAdminFromToken } from "@/lib/auth";
@@ -238,12 +238,26 @@ export default function SecurityCenterPage() {
         description="Zero Trust device, session, and access controls for your account."
         actions={
           isAdmin ? (
-            <Link
-              href="/compliance"
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
-            >
-              <ClipboardCheck size={16} /> Compliance Center
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/compliance"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
+              >
+                <ClipboardCheck size={16} /> Compliance Center
+              </Link>
+              <Link
+                href="/cloud-security"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
+              >
+                <Cloud size={16} /> Cloud Security
+              </Link>
+              <Link
+                href="/devsecops"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors"
+              >
+                <ShieldHalf size={16} /> DevSecOps
+              </Link>
+            </div>
           ) : undefined
         }
       />

@@ -914,6 +914,42 @@ SecureShare has no multi-cloud footprint to enumerate, so Phase 11's "cloud" sca
 
 ---
 
+## 🛠️ Phase 12: Enterprise DevSecOps & Software Supply Chain Security
+
+Same principle as Phase 11, applied one layer down the stack: SecureShare has no real multi-repo GitHub org, CVE feed subscription, or CI system to integrate with, so Phase 12 self-scans SecureShare's **own** git repository, its own `package.json`/`package-lock.json` dependency trees, its own source tree, its own `backend/Dockerfile`, and its own `docker-compose.yml` - producing genuinely real findings (the backend really does depend on a deprecated `crypto` shim package, the Dockerfile really does run as root and `CMD`s `npm run dev`, `docker-compose.yml` really does expose Mongo's port publicly, and a real `jwt.sign()` call really is missing `expiresIn`) rather than synthetic data. Nothing from Phases 1-11 was rewritten; every finding flows through the existing SIEM/SOAR/Compliance pipelines.
+
+**Repository scanner** (`backend/models/Repository.js`, `backend/services/devsecops/repositoryScanner.js`): reads this repo's own `git remote -v`/`git branch --show-current`/`git rev-parse HEAD`/`git log -1` (read-only `child_process.execFileSync` calls, no GitHub/GitLab/Azure DevOps/Bitbucket API token needed) and detects the provider from the remote URL's host.
+
+**Dependency scanner** (`backend/services/devsecops/dependencyScanner.js`): parses both real manifests (`backend/package.json`, `frontend/package.json` - npm is the only ecosystem actually in use here). A local curated advisory table (same "local-first" shape as `iocLookupService.js`) flags real issues already present in this repo (the `crypto` npm package shadows Node's builtin), a Levenshtein-distance check flags likely typosquats, license fields are read from each installed package's own `package.json`, and an optional live `registry.npmjs.org` lookup flags outdated versions - degrading gracefully offline.
+
+**Secret scanner** (`backend/services/devsecops/secretScanner.js`): regex rules for AWS/Azure/GCP keys, GitHub/GitLab/Slack/Stripe/OpenAI tokens, PEM/SSH private keys, JWTs, and DB connection strings, plus a Shannon-entropy heuristic for generic high-entropy strings - scoped to actual source/config files (never `.env`, since that would mean persisting a masked preview of this deployment's *real* live secret into the findings collection - a worse exposure surface than not scanning it).
+
+**SAST** (`backend/services/devsecops/sastScanner.js`): pure pattern-matching rules (mirroring `configScanner.js`'s rule-function convention) for SQL injection, command injection, `eval()`, open redirect, path traversal, weak hash usage, JWTs signed without an expiry, SSRF, and unbounded file uploads - genuinely caught a real unsigned-JWT-expiry gap in `services/iam/sessionIssuer.js` during development.
+
+**Container security** (`backend/services/devsecops/containerScanner.js`): static analysis of `backend/Dockerfile` only - no image is built or pulled. Real findings surfaced against this repo's own Dockerfile: no `USER` directive (runs as root), `CMD ["npm", "run", "dev"]` (a dev server in the shipped image), no `HEALTHCHECK`, and `npm install` instead of `npm ci`.
+
+**Infrastructure as Code** (`backend/services/devsecops/iacScanner.js`): analyzes this repo's own `docker-compose.yml` with a lightweight line-based reader (no new YAML dependency) - real findings include Mongo's `27017:27017` port bound to all interfaces and missing restart/resource-limit policies per service. Terraform/CloudFormation/Kubernetes/Helm are supported via file-type dispatch if such files exist (they don't today - reported honestly, not faked).
+
+**SBOM generator** (`backend/services/devsecops/sbomGenerator.js`): builds real CycloneDX 1.5 and SPDX 2.3 documents (JSON and XML) directly from both `package-lock.json` files' `packages` map (npm lockfile v3) - every component's version, PURL, license, and SHA hash (decoded from the lockfile's existing SRI integrity field) is real, not fabricated.
+
+**CI/CD monitoring** (`backend/services/devsecops/pipelineMonitor.js`): detects `.github/workflows`/`.gitlab-ci.yml`/`Jenkinsfile`/`azure-pipelines.yml`. None exist in this repo today, so that absence is logged as a real `"No CI/CD Pipeline Configuration Detected"` finding rather than a synthesized pipeline history; if `GITHUB_TOKEN`+`GITHUB_REPO` are configured, one real GitHub Actions API call fetches the latest workflow run, degrading gracefully otherwise.
+
+**Artifact security** (`backend/services/devsecops/artifactSecurity.js`): reuses the existing `utils/fileHashes.js` hashing helper (no new hashing code) to hash both `package-lock.json` files as stand-in build artifacts, signs the hash with an HMAC keyed on the app's existing `JWT_SECRET`, and verifies/detects tampering by re-hashing - honestly documented as an integrity/tamper-detection mechanism, not a code-signing PKI certificate.
+
+**Risk Engine** (`backend/services/devsecops/riskEngine.js`): Repository/Dependency/Secret/Container/Pipeline component scores (SAST findings roll into Repository, IaC findings roll into Container) plus a weighted overall score, persisted per run to the new `DevSecOpsScoreSnapshot` model for the dashboard's trend chart.
+
+**Compliance integration, for free**: a new `devSecOpsEvaluator` (`controlEvaluators.js`) fails/scores based on open CRITICAL/HIGH `DevSecOpsFinding`s, seeded as one control under ISO 27001, SOC 2, NIST CSF, PCI DSS, CIS Controls, and OWASP ASVS - so open supply-chain findings automatically lower those frameworks' compliance scores with no parallel scoring system.
+
+**SOAR integration, for free**: new `DEPENDENCY_VULNERABILITY_CRITICAL`/`SECRET_FOUND_CRITICAL`/`CONTAINER_VULNERABILITY_CRITICAL`/`PIPELINE_BLOCKED`/`HIGH_RISK_REPOSITORY` triggers drive a "Supply Chain Incident Response" playbook (raise incident → notify admin → advisory deployment block → re-run scan → generate report), reusing `raiseIncident`/`notifyAdmin` and three new actions (`blockDeployment`, `rerunDevSecOpsScan`, `generateDevSecOpsReport`). `blockDeployment` is honestly scoped as *advisory* - there's no real CD system in this project to actually halt.
+
+**DevSecOps dashboard**: `/devsecops` (plus `/devsecops/findings`, `/sbom`, and `/reports`) - overall + 5 component scores, repository card, findings by severity/category, SBOM summary, pipeline status, 90-day score history, recent scans, and recommendations, via Recharts. Admin-only end to end (`requireAdmin` on every `/api/devsecops/*` route), matching Compliance/SOAR/Cloud Security's gating.
+
+**Continuous scanning**: a daily `node-cron` job (05:00, offset from Compliance's 03:00 and Cloud's 04:00) plus a one-off scan ~15s after every server startup (skipping the live npm-registry check so boot never depends on network reachability), both via `runDevSecOpsScan()` (`backend/services/devsecops/devSecOpsOrchestrator.js`).
+
+**Exports**: CSV/JSON/PDF via `backend/services/devsecops/devSecOpsReportGenerator.js`, mirroring `cloudReportGenerator.js`'s exact conventions, parameterized into Executive/SBOM/Dependency/Secret/Container/Pipeline report variants from the same underlying data.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -1253,6 +1289,23 @@ All routes below are admin-only (`requireAdmin`).
 | `GET` | `/history` | Score history for the trend chart (`?days=`) | Admin |
 | `POST` | `/scan` | Run a full CSPM/ASM scan (discovery → config scan → certs → attack surface → threat intel → score) | Admin |
 | `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Export the current inventory/findings/certificates as a report | Admin |
+
+### DevSecOps Routes (`/api/devsecops`, Phase 12)
+
+All routes below are admin-only (`requireAdmin`).
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/dashboard` | Overall + 5 component scores, repository card, finding breakdowns, SBOM/pipeline summaries, recent scans, trend, recommendations | Admin |
+| `GET` | `/repositories` | List tracked repositories | Admin |
+| `POST` | `/repositories` | Re-scan this repo's git remote/branch/commit info | Admin |
+| `GET` | `/dependencies` \| `/secrets` \| `/sast` \| `/container` \| `/iac` | List findings for that category, optionally filtered by `severity`/`status` (defaults to open) | Admin |
+| `POST` | `/container` | Run just the container/Dockerfile scan | Admin |
+| `GET` | `/sbom` | List generated SBOM documents (metadata only) | Admin |
+| `POST` | `/sbom` | Generate a new SBOM (`{ format: "CycloneDX"\|"SPDX", serialization: "JSON"\|"XML" }`) | Admin |
+| `GET` | `/reports` | List generated report records | Admin |
+| `POST` | `/scan` | Run a full DevSecOps scan (repository → dependency → secret → SAST → container → IaC → pipeline → artifacts → score) | Admin |
+| `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Export a report (`?reportType=executive\|sbom\|dependency\|secret\|container\|pipeline`) | Admin |
 
 **Upload Request:**
 ```json

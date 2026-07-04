@@ -258,6 +258,39 @@ Call this as the last step of your CI/CD pipeline (after the new instance is ser
 
 ---
 
+## 7. DevSecOps / Software Supply Chain Security (Phase 12)
+
+Repository, dependency, secret, SAST, container, and IaC scanning run automatically (a daily `node-cron` job at 05:00, plus a one-off scan ~15s after every server startup) - no configuration is required to get baseline coverage of this repository's own supply-chain posture.
+
+### Optional configuration
+
+Set in `backend/.env` only if you want live GitHub Actions pipeline status (otherwise the scanner correctly reports "no CI/CD configuration detected" if `.github/workflows` doesn't exist, or "detected but status unknown" if it does):
+
+```env
+# A GitHub personal access token with `actions:read` scope on the target repo.
+GITHUB_TOKEN=
+
+# owner/repo, e.g. Shanidhya01/SecureShare
+GITHUB_REPO=
+```
+
+### Triggering a scan manually
+
+```bash
+curl -X POST https://your-backend-domain.example.com/api/devsecops/scan \
+  -H "Authorization: Bearer <admin_jwt>"
+```
+
+Like the Cloud Security scan, there is no reliable way for this process to detect "a deploy just happened" to itself - call this endpoint as a step in your CI/CD pipeline (or rely on the daily scheduled scan) rather than expecting automatic detection.
+
+### Notes on scan scope
+
+- The dependency scanner's "outdated version" check makes a live call to `registry.npmjs.org` per dependency - this can be slow on a large `node_modules` tree. Pass `?live=false` to `POST /api/devsecops/scan` (or rely on the startup scan, which always skips it) to scan offline only.
+- The secret/SAST scanners never read `.env`/`.env.production` - only tracked source/config files. Real secrets are never persisted, even in masked form.
+- Container/IaC scanning is static analysis of `Dockerfile`/`docker-compose.yml` only - no image is built, pulled, or run.
+
+---
+
 ## Post-Deployment Checklist
 
 - [ ] Frontend loads and `NEXT_PUBLIC_API` correctly points at the deployed backend
@@ -267,6 +300,7 @@ Call this as the last step of your CI/CD pipeline (after the new instance is ser
 - [ ] `clamav.status` is `"clean"` (not `"unavailable"`) on a test upload, if ClamAV was deployed
 - [ ] `GET /api/cloud/dashboard` (with an admin JWT) returns a populated overall score after the startup scan runs
 - [ ] `virusTotal.status` is not `"error"` on a test upload, if a VirusTotal key was configured
+- [ ] `GET /api/devsecops/dashboard` (with an admin JWT) returns a populated overall score after the startup scan runs
 - [ ] MongoDB Atlas Network Access is restricted to known IPs (not left at `0.0.0.0/0`) for production
 - [ ] `JWT_SECRET` and the RSA keypair are unique to this deployment, not copied from a dev `.env`
 

@@ -6,6 +6,35 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 12 — Enterprise DevSecOps & Software Supply Chain Security
+**2026-07-04**
+
+A self-scanning software-supply-chain layer over SecureShare's own repository, dependencies, source code, container, and CI/CD config - there is no real multi-repo/CVE-feed/CI system to integrate with, so every finding is produced by introspecting this project's own real files. No prior phase's code was rewritten.
+
+### Added
+- `backend/models/Repository.js`, `DevSecOpsFinding.js`, `SBOMDocument.js`, `PipelineRun.js`, `ArtifactSignature.js`, `DevSecOpsScoreSnapshot.js` - the self-scanned repository record, a unified finding store for dependency/secret/SAST/container/IaC/pipeline findings, generated SBOM documents, pipeline observations, artifact tamper-evidence records, and per-scan-run score snapshots
+- `backend/services/devsecops/repositoryScanner.js` - reads this repo's own git remote/branch/commit/author via read-only `git` commands
+- `backend/services/devsecops/dependencyScanner.js` - scans both real `package.json` manifests for known-deprecated packages (flags the `crypto` npm shim), typosquats (Levenshtein distance), copyleft licenses, and (optionally, live) outdated versions
+- `backend/services/devsecops/secretScanner.js` - regex + Shannon-entropy secret detection (AWS/Azure/GCP/GitHub/GitLab/Slack/Stripe/OpenAI/JWT/PEM/DB-connection-string patterns) over this repo's own source
+- `backend/services/devsecops/sastScanner.js` - pattern-based static analysis (SQLi, command injection, eval, open redirect, path traversal, weak hashes, unsigned-expiry JWTs, SSRF, unbounded uploads) - caught a real missing-`expiresIn` JWT in `services/iam/sessionIssuer.js`
+- `backend/services/devsecops/containerScanner.js` - static analysis of `backend/Dockerfile` (real findings: runs as root, ships a dev-server `CMD`, no `HEALTHCHECK`, non-reproducible install)
+- `backend/services/devsecops/iacScanner.js` - analyzes `docker-compose.yml` (real findings: Mongo's port publicly exposed, missing restart/resource-limit policies)
+- `backend/services/devsecops/sbomGenerator.js` - real CycloneDX 1.5 / SPDX 2.3 SBOM generation (JSON + XML) directly from both `package-lock.json` files
+- `backend/services/devsecops/pipelineMonitor.js` - detects `.github/workflows`/GitLab CI/Jenkins/Azure Pipelines config (none present today - logged as a real finding, not faked); optional live GitHub Actions API check via `GITHUB_TOKEN`/`GITHUB_REPO`
+- `backend/services/devsecops/artifactSecurity.js` - reuses `utils/fileHashes.js` to hash + HMAC-sign `package-lock.json` files as stand-in build artifacts, with tamper detection via re-hash comparison
+- `backend/services/devsecops/riskEngine.js` - Repository/Dependency/Secret/Container/Pipeline component scores plus a weighted overall DevSecOps score
+- `backend/services/devsecops/devSecOpsOrchestrator.js` (`runDevSecOpsScan`) - the single entry point chaining every scanner above
+- `backend/services/devsecops/devSecOpsReportGenerator.js` - CSV/JSON/PDF export builders, parameterized into Executive/SBOM/Dependency/Secret/Container/Pipeline report variants
+- `backend/controllers/devsecops.controller.js`, `backend/routes/devsecops.routes.js` (`/api/devsecops/*`, admin-only) - dashboard, repositories, category-scoped findings, SBOM, reports, scan, and export endpoints
+- A new `devSecOpsEvaluator` in `services/compliance/controlEvaluators.js`, seeded as one control under ISO 27001, SOC 2, NIST CSF, PCI DSS, CIS Controls, and OWASP ASVS
+- A new "Supply Chain Incident Response" playbook and `DEPENDENCY_VULNERABILITY_CRITICAL`/`SECRET_FOUND_CRITICAL`/`CONTAINER_VULNERABILITY_CRITICAL`/`PIPELINE_BLOCKED`/`HIGH_RISK_REPOSITORY` automation triggers (`services/soar/seedPlaybooks.js`), plus three new SOAR actions: `blockDeployment` (advisory - no live CD system to enforce it), `rerunDevSecOpsScan`, `generateDevSecOpsReport`
+- 11 new SIEM event types (`dependency_vulnerability`, `secret_found`, `sbom_generated`, `sast_finding`, `container_vulnerability`, `pipeline_failed`, `pipeline_blocked`, `high_risk_repository`, `iac_misconfiguration`, etc.) and a new `DEVSECOPS` category, added additively to `SecurityEvent.js`/`Incident.js`
+- `/devsecops` dashboard plus `/findings`, `/sbom`, and `/reports` pages, with a new "DevSecOps" nav entry (and a Phase 11 gap fix - `/cloud-security` was never added to the Topbar/Security Center links; both it and `/devsecops` are added now)
+- A daily `node-cron` scan (05:00) and a startup scan in `server.js`
+- `backend/tests/devsecops.test.js` - unit tests for every scanner's rule functions, SBOM component/PURL generation, artifact tamper detection, the risk engine's weighting, and the new SOAR/SIEM trigger mappings
+
+---
+
 ## Phase 11 — Cloud Security Posture Management & Attack Surface Management
 **2026-07-04**
 
