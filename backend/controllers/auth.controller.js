@@ -133,7 +133,10 @@ export const login = async (req, res) => {
       country
     }).catch((e) => console.error("Failed to record security event:", e));
 
-    const token = jwt.sign({ id: user._id, sid: sessionId }, process.env.JWT_SECRET);
+    // Phase 8: isAdmin is included so the frontend can gate SOAR rule/playbook management
+    // client-side; the backend's requireAdmin middleware re-checks the User doc itself on every
+    // mutating request, so this claim is a UI convenience only, never trusted for authorization.
+    const token = jwt.sign({ id: user._id, sid: sessionId, isAdmin: !!user.isAdmin }, process.env.JWT_SECRET);
     res.json({ token, user: { email: user.email, name: user.name } });
   } catch (err) {
     console.error("Login error:", err);

@@ -33,12 +33,22 @@ export const TYPE_META = {
   threat_intel_match: { siemType: "THREAT_INTEL_MATCH", severity: "CRITICAL", category: "THREAT", label: "Threat Intel Match" },
   mitre_mapping: { siemType: "MITRE_MAPPING", severity: "MEDIUM", category: "THREAT", label: "MITRE Technique Mapped" },
   yara_match: { siemType: "YARA_MATCH", severity: "HIGH", category: "THREAT", label: "YARA Rule Match" },
-  provider_error: { siemType: "PROVIDER_ERROR", severity: "LOW", category: "THREAT", label: "Threat Intel Provider Error" }
+  provider_error: { siemType: "PROVIDER_ERROR", severity: "LOW", category: "THREAT", label: "Threat Intel Provider Error" },
+
+  // --- New types (Phase 8: SOAR) ---
+  playbook_started: { siemType: "PLAYBOOK_STARTED", severity: "INFO", category: "AUTOMATION", label: "Playbook Started" },
+  playbook_completed: { siemType: "PLAYBOOK_COMPLETED", severity: "INFO", category: "AUTOMATION", label: "Playbook Completed" },
+  playbook_failed: { siemType: "PLAYBOOK_FAILED", severity: "HIGH", category: "AUTOMATION", label: "Playbook Failed" },
+  automation_triggered: { siemType: "AUTOMATION_TRIGGERED", severity: "MEDIUM", category: "AUTOMATION", label: "Automation Triggered" },
+  automation_skipped: { siemType: "AUTOMATION_SKIPPED", severity: "INFO", category: "AUTOMATION", label: "Automation Skipped" },
+  session_revoked_automatically: { siemType: "SESSION_REVOKED_AUTOMATICALLY", severity: "MEDIUM", category: "AUTOMATION", label: "Session Revoked Automatically" },
+  file_quarantined_automatically: { siemType: "FILE_QUARANTINED_AUTOMATICALLY", severity: "HIGH", category: "AUTOMATION", label: "File Quarantined Automatically" },
+  user_notified: { siemType: "USER_NOTIFIED", severity: "INFO", category: "AUTOMATION", label: "User Notified" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION"
 ];
 
 export function resolveEventMeta(type) {

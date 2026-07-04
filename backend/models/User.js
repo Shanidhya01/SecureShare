@@ -11,7 +11,12 @@ const userSchema = new mongoose.Schema({
 
   // base64 SPKI DER, ECDSA P-256 public signing key generated client-side (Phase 2: integrity/
   // authenticity verification). The matching private signing key never leaves the browser either.
-  signingPublicKey: String
+  signingPublicKey: String,
+
+  // Phase 8 (SOAR): the first admin concept in this codebase. Defaults to false for every
+  // existing/new account - grant manually (e.g. directly in Mongo) to allow managing automation
+  // rules/playbooks. Never settable via any public API.
+  isAdmin: { type: Boolean, default: false }
 });
 
 export default mongoose.model("User", userSchema);

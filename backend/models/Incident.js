@@ -15,7 +15,7 @@ const incidentSchema = new mongoose.Schema({
 
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION"]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "MEDIUM" },
   status: { type: String, enum: ["open", "investigating", "resolved"], default: "open" },
@@ -25,7 +25,28 @@ const incidentSchema = new mongoose.Schema({
   eventCount: { type: Number, default: 0 },
 
   firstEventAt: Date,
-  lastEventAt: Date
+  lastEventAt: Date,
+
+  // Phase 8 (SOAR): populated after runSoarEngine() responds to an event correlated into this
+  // incident - purely additive, defaults leave every pre-Phase-8 incident unaffected.
+  automationStatus: { type: String, enum: ["none", "triggered", "completed", "failed"], default: "none" },
+  executedPlaybooks: [
+    {
+      playbookId: { type: mongoose.Schema.Types.ObjectId, ref: "Playbook" },
+      playbookName: String,
+      executionId: { type: mongoose.Schema.Types.ObjectId, ref: "AutomationExecution" },
+      ranAt: { type: Date, default: Date.now }
+    }
+  ],
+  actionTimeline: [
+    {
+      type: String,
+      success: Boolean,
+      detail: String,
+      timestamp: { type: Date, default: Date.now }
+    }
+  ],
+  responseDurationMs: { type: Number, default: null }
 }, { timestamps: true });
 
 incidentSchema.index({ owner: 1, lastEventAt: -1 });

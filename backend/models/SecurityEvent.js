@@ -17,7 +17,12 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 6 (SIEM): previously-unlogged events, added to the activity feed. Additive only -
       // none of the values above changed meaning or were removed.
       "login", "register", "session_created", "upload", "download_allowed",
-      "threat_found", "signature_verified", "signature_invalid", "policy_violation"
+      "threat_found", "signature_verified", "signature_invalid", "policy_violation",
+      // Phase 7: Threat Intelligence
+      "ioc_match", "ioc_lookup", "threat_intel_match", "mitre_mapping", "yara_match", "provider_error",
+      // Phase 8: SOAR
+      "playbook_started", "playbook_completed", "playbook_failed", "automation_triggered",
+      "automation_skipped", "session_revoked_automatically", "file_quarantined_automatically", "user_notified"
     ]
   },
   message: String,
@@ -42,13 +47,18 @@ const securityEventSchema = new mongoose.Schema({
       "SIGNATURE_VERIFIED", "SIGNATURE_INVALID",
       "DEVICE_NEW", "DEVICE_REVOKED",
       "SESSION_CREATED", "SESSION_REVOKED",
-      "POLICY_VIOLATION"
+      "POLICY_VIOLATION",
+      // Phase 7: Threat Intelligence
+      "IOC_MATCH", "IOC_LOOKUP", "THREAT_INTEL_MATCH", "MITRE_MAPPING", "YARA_MATCH", "PROVIDER_ERROR",
+      // Phase 8: SOAR
+      "PLAYBOOK_STARTED", "PLAYBOOK_COMPLETED", "PLAYBOOK_FAILED", "AUTOMATION_TRIGGERED",
+      "AUTOMATION_SKIPPED", "SESSION_REVOKED_AUTOMATICALLY", "FILE_QUARANTINED_AUTOMATICALLY", "USER_NOTIFIED"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

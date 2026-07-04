@@ -6,6 +6,38 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 8 — Security Orchestration, Automation & Response (SOAR)
+**2026-07-04**
+
+Automatically responds to security events using configurable automation rules and reusable playbooks - closing the loop between Phase 6's unified event feed and actual remediation, without adding new detection logic or modifying any existing detection/crypto/policy code.
+
+### Added
+- `backend/models/AutomationRule.js` - trigger + conditions + ordered actions (inline or via a shared playbook), priority, enabled flag
+- `backend/models/Playbook.js` - named, reusable ordered list of response action steps
+- `backend/models/AutomationExecution.js` - full audit record of every rule firing: actions executed, status, duration, result, linked incident
+- `backend/models/Notification.js` - in-app notification record used by the notifyUser/notifyAdmin actions
+- `backend/services/soar/ruleMatcher.js` - pure, DB-free `matchRules`/`evaluateCondition`/`eventTriggerFor`, unit tested like `correlationEngine.js`'s `evaluateRules`
+- `backend/services/soar/playbookRunner.js` (`runPlaybook`) - executes ordered steps against an injectable action-handler registry, supporting `continueOnFailure` and completed/partial/failed status
+- `backend/services/soar/actions/` - 13 response action handlers (quarantineFile, deleteFile, blockDownload, revokeSession, logoutUser, disableDevice, markFileHighRisk, raiseIncident, notifyUser, notifyAdmin, sendEmail, generateSiemEvent, generateAuditLog), registered in `actions/index.js` mirroring the `dlp/detectors/index.js` pattern
+- `backend/services/soar/soarEngine.js` (`runSoarEngine`) - the orchestrator, called from a single interception point (`siemLogger.js`, right after correlation) with a recursion guard against automation-generated events
+- `backend/services/soar/seedPlaybooks.js` - seeds 5 example playbooks (Malware Response, Credential Leak Response, DLP Response, Suspicious Device Response, Known Malicious IOC Response) and their triggering rules once at server startup
+- `backend/middleware/requireAdmin.js` - the first admin-gating middleware in this codebase
+- SOAR REST API (`/api/soar/rules`, `/playbooks` [+clone/import/export], `/action-types`, `/executions`, `/stats`, `/export`)
+- SOAR dashboard (`frontend/app/soar/page.tsx`) - rule/playbook management, Recent/Failed Executions, Automation Success Rate/Action Distribution/Top Rules/Top Playbooks/Automation Frequency charts, CSV/JSON export
+- `frontend/lib/auth.ts` - client-side JWT payload decode for the `isAdmin` UI convenience claim (never trusted for actual authorization)
+- `backend/tests/soarEngine.test.js` - unit tests for rule matching, playbook execution ordering/failure handling, and the automation recursion guard
+
+### Changed
+- `backend/models/User.js` gained `isAdmin` (default `false`) - the first role field in this codebase, additive and safe for every existing account
+- `backend/controllers/auth.controller.js`'s login now includes `isAdmin` in the signed JWT (a UI convenience claim only; the backend always re-checks the User document)
+- `backend/models/Incident.js` gained `automationStatus`, `executedPlaybooks[]`, `actionTimeline[]`, `responseDurationMs` - additive fields populated by the SOAR engine after `correlationEngine.js`'s existing incident logic runs, untouched
+- `backend/services/siem/eventCatalog.js`'s `TYPE_META`/`CATEGORIES` extended (additive) with `playbook_started/completed/failed`, `automation_triggered/skipped`, `session_revoked_automatically`, `file_quarantined_automatically`, `user_notified`, and a new `AUTOMATION` category
+- `backend/services/siem/siemLogger.js` now calls `runSoarEngine()` (fire-and-forget) after correlation, re-fetching the persisted event first so `correlationId` is current
+- **Bug fix**: `backend/models/SecurityEvent.js`'s `type`/`siemType` enums were missing every Phase 7 (Threat Intelligence) value - those events were silently failing Mongoose validation since Phase 7 shipped. Fixed alongside the Phase 8 additions; both Phase 7's and Phase 8's event types are now present in both enums
+- Added "SOAR" to the main navigation (`frontend/components/shell/navItems.ts`)
+
+---
+
 ## Phase 7 — Threat Intelligence & IOC Intelligence
 **2026-07-04**
 

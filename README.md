@@ -788,6 +788,30 @@ Phase 4 checks whether a file itself looks malicious (magic bytes, ClamAV, Virus
 
 ---
 
+## 🤖 Phase 8: Security Orchestration, Automation & Response (SOAR)
+
+Phase 6 gives every prior phase a unified event feed and correlates related events into Incidents, but a human still has to act on them. Phase 8 closes that loop: configurable **Automation Rules** watch the same SecurityEvent stream, match a `trigger` (e.g. `THREAT_FOUND`, `IOC_MATCH`, `DLP_BLOCK`, `YARA_MATCH`) plus optional field conditions, and run a **Playbook** - an ordered list of response actions (quarantine a file, revoke a session, disable a device, notify someone, raise an incident) - automatically. This is a pure orchestration layer on top of Phases 4-7's existing detection outputs; it introduces no new detection logic of its own.
+
+**Single interception point**: `backend/services/soar/soarEngine.js`'s `runSoarEngine(event)` is called from exactly one place - `backend/services/siem/siemLogger.js`, immediately after the existing correlation step - so no controller anywhere in the app had to change to wire this up. A guard (`event.category === "AUTOMATION"`) stops SOAR's own generated events (playbook start/complete/fail, notifications, etc.) from re-triggering itself.
+
+**Rule engine** (`backend/models/AutomationRule.js`, `backend/services/soar/ruleMatcher.js`): `matchRules(event, rules)` is a pure, DB-free function (mirroring `correlationEngine.js`'s `evaluateRules`) that maps an event to a trigger via `eventTriggerFor()`, filters to enabled rules whose trigger matches and whose `conditions` (field/operator/value triples, e.g. `severity gte High`) all pass, and sorts by ascending `priority`. Two trigger values in the spec (`SESSION_COMPROMISED`, `MULTIPLE_FAILED_LOGINS`) have no emitting event anywhere in this codebase yet - they're accepted by the schema for forward compatibility but never fire today, since adding failed-login logging would mean touching Phase 1/3's auth flow, out of scope for an additive orchestration layer.
+
+**Playbook engine** (`backend/models/Playbook.js`, `backend/services/soar/playbookRunner.js`): a named, reusable ordered list of steps, each mapping to a handler in the **action registry** (`backend/services/soar/actions/`, one file per action mirroring the `dlp/detectors/`-style module array): `quarantineFile`, `deleteFile`/`blockDownload` (soft-delete via the existing `File.revoked` field), `revokeSession`/`logoutUser` (the exact `Session.revoked` field `auth.middleware.js` already checks), `disableDevice` (`Device.revoked`/`trusted`), `markFileHighRisk`, `raiseIncident`, `notifyUser`/`notifyAdmin`/`sendEmail`, `generateSiemEvent`, `generateAuditLog`. Five example playbooks (Malware Response, Credential Leak Response, DLP Response, Suspicious Device Response, Known Malicious IOC Response) and their triggering rules are auto-seeded once at server startup (`ensureSeedPlaybooks()`).
+
+**Honest limitation - no email exists**: this codebase has no SMTP/nodemailer integration. `notifyUser`/`notifyAdmin` create genuine in-app `Notification` records (plus a SIEM event); `sendEmail` is a documented alias for the same in-app mechanism, not real email delivery, kept as a distinct action name for spec compliance and future extension.
+
+**Action history**: every rule firing is recorded as an `AutomationExecution` document (rule, playbook, every action's individual result/duration, overall status, and the incident it updated) - the audit trail behind the SOAR dashboard's Recent/Failed Executions views.
+
+**Incident integration**: `backend/models/Incident.js` gained additive fields - `automationStatus`, `executedPlaybooks[]`, `actionTimeline[]`, `responseDurationMs` - populated by the SOAR engine after a correlated event's response completes, without touching `correlationEngine.js`'s existing incident-creation logic at all.
+
+**Admin gating**: this is the first admin concept in the codebase. `User.isAdmin` (default `false` on every account) gates rule/playbook create/edit/delete/import via a new `backend/middleware/requireAdmin.js`, chained after the existing `auth` middleware and re-checking the User document on every request (never trusting the JWT's `isAdmin` convenience claim alone). Normal users can view rules/playbooks/executions/stats but only see automation that touched their own files.
+
+**Dashboard**: `/soar` (`frontend/app/soar/page.tsx`) - rule/playbook management tables (admin-only mutation controls), a Recent Executions timeline, a Failed Executions list, Automation Success Rate / Action Distribution / Top Rules / Top Playbooks / Automation Frequency charts, and CSV/JSON export.
+
+**Backward compatibility**: every schema change (`User.isAdmin`, `Incident`'s four new fields, the JWT's `isAdmin` claim) is additive with safe defaults - accounts, incidents, and tokens issued before Phase 8 are completely unaffected, and a rule/playbook misconfiguration or action failure never blocks the request that triggered it (playbook execution is fire-and-forget from `logSecurityEvent`'s perspective).
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -1026,6 +1050,28 @@ docker-compose down
 | `GET` | `/mitre` | The curated MITRE ATT&CK technique catalog | Yes |
 | `GET` | `/yara-rules` | Stored YARA rules | Yes |
 | `GET` | `/export` | CSV/JSON export of your threat intelligence scans | Yes |
+
+### SOAR Routes (`/api/soar`, Phase 8)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/rules` | List automation rules | Yes |
+| `POST` | `/rules` | Create an automation rule - see [Phase 8](#-phase-8-security-orchestration-automation--response-soar) | Admin |
+| `PUT` | `/rules/:id` | Edit a rule | Admin |
+| `PATCH` | `/rules/:id/enabled` | Enable/disable a rule | Admin |
+| `DELETE` | `/rules/:id` | Delete a rule | Admin |
+| `GET` | `/playbooks` | List playbooks | Yes |
+| `POST` | `/playbooks` | Create a playbook | Admin |
+| `PUT` | `/playbooks/:id` | Edit a playbook | Admin |
+| `DELETE` | `/playbooks/:id` | Delete a playbook | Admin |
+| `POST` | `/playbooks/:id/clone` | Clone a playbook | Admin |
+| `GET` | `/playbooks/:id/export` | Export a playbook as JSON | Admin |
+| `POST` | `/playbooks/import` | Import a playbook from JSON | Admin |
+| `GET` | `/action-types` | The list of registered response action types | Yes |
+| `GET` | `/executions` | Automation execution history (own files only unless admin) | Yes |
+| `GET` | `/executions/:id` | A single execution's full detail | Yes |
+| `GET` | `/stats` | Success rate, response time, top rules/playbooks, action distribution | Yes |
+| `GET` | `/export` | CSV/JSON export of execution history | Yes |
 
 **Upload Request:**
 ```json

@@ -10,6 +10,7 @@ import {
   Radar,
   Settings,
   Crosshair,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +27,7 @@ export const navItems: NavItem[] = [
   { label: "Threat Center", href: "/threats", icon: ScanSearch },
   { label: "DLP Center", href: "/dlp", icon: Eye },
   { label: "Threat Intelligence", href: "/threat-intelligence", icon: Crosshair },
+  { label: "SOAR", href: "/soar", icon: Bot },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
   { label: "Security Operations", href: "/soc", icon: Radar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },

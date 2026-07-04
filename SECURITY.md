@@ -44,6 +44,18 @@ Every uploaded file's hash is cross-referenced against a local IOC (Indicator of
 
 **What Phase 7 does not do**: like the SIEM correlation engine, it is detection/enrichment-only — a critical IOC/YARA/MITRE match never blocks an upload or a download by itself (that remains Phase 3's Zero Trust policy engine and Phase 4/5's quarantine/block decisions). No existing model, route, or controller behavior was changed; every integration point is additive.
 
+### Security Orchestration, Automation & Response (Phase 8)
+
+Configurable Automation Rules watch the unified SecurityEvent stream Phase 6 already produces; when a rule's trigger and conditions match, its Playbook's ordered response actions run automatically (quarantine a file, revoke a session, disable a device, notify the owner/an administrator, raise an incident). Every execution — including every individual action's success/failure — is recorded as an `AutomationExecution` document, and the correlated `Incident` (if any) is updated with the automation's status and action timeline.
+
+**Admin gating is new in this phase**: `User.isAdmin` (default `false`) is the first role concept in this codebase. Creating, editing, or deleting rules and playbooks requires an admin account, enforced server-side by `backend/middleware/requireAdmin.js`, which re-checks the User document on every request rather than trusting the JWT's `isAdmin` claim. Normal users can view automation history but only for their own files.
+
+**No real email delivery**: `notifyUser`/`notifyAdmin`/`sendEmail` create in-app `Notification` records, not SMTP-delivered email — there is no mail transport in this codebase. This is documented plainly in the action handlers themselves rather than presented as email delivery.
+
+**Recursion safety**: SOAR's own actions emit SecurityEvents (notifications, playbook status, audit-log entries), all tagged `category: "AUTOMATION"`. The engine's entry point explicitly ignores events in that category before doing any rule matching, so automation can never trigger itself in a loop.
+
+**What Phase 8 does not do**: it does not add new detection capability — every trigger is sourced from an event a prior phase already produces. A playbook step failing never blocks or fails the original request that triggered it (e.g. a failed quarantine action doesn't undo an upload); failures are recorded for visibility on the `/soar` dashboard, not silently swallowed. No existing model, route, or controller behavior was changed — every integration point (the `isAdmin` field, the JWT claim, the `Incident` schema additions, the `logSecurityEvent` hook) is additive.
+
 ---
 
 ## Supported Algorithms

@@ -1,6 +1,7 @@
 import SecurityEvent from "../../models/SecurityEvent.js";
 import { resolveEventMeta } from "./eventCatalog.js";
 import { correlateEvent } from "./correlationEngine.js";
+import { runSoarEngine } from "../soar/soarEngine.js";
 
 /**
  * Phase 6 (SIEM): the single place that writes SecurityEvent docs. Every controller that used to
@@ -44,6 +45,12 @@ export async function logSecurityEvent({
     });
 
     await correlateEvent(event);
+
+    // Phase 8 (SOAR): re-fetch so correlationId (set by correlateEvent's updateMany, which never
+    // touches this in-memory doc) is current before rule matching/incident updates run.
+    const freshEvent = await SecurityEvent.findById(event._id).lean();
+    runSoarEngine(freshEvent).catch((err) => console.error("SOAR engine error:", err));
+
     return event;
   } catch (err) {
     console.error("Failed to record security event:", err);

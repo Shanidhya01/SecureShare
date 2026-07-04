@@ -13,9 +13,11 @@ import threatRoutes from "./routes/threat.routes.js";
 import dlpRoutes from "./routes/dlp.routes.js";
 import siemRoutes from "./routes/siem.routes.js";
 import threatIntelRoutes from "./routes/threatIntel.routes.js";
+import soarRoutes from "./routes/soar.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
+import { ensureSeedPlaybooks } from "./services/soar/seedPlaybooks.js";
 
 dotenv.config();
 
@@ -33,6 +35,7 @@ if (!process.env.MONGO_URI) {
     .then(() => {
       console.log("MongoDB connected");
       ensureSeedRules().catch((err) => console.error("Failed to seed YARA rules:", err.message));
+      ensureSeedPlaybooks().catch((err) => console.error("Failed to seed SOAR playbooks:", err.message));
     })
     .catch((err) => console.error("MongoDB connection error:", err.message));
 }
@@ -51,6 +54,7 @@ app.use("/api/threats", threatRoutes);
 app.use("/api/dlp", dlpRoutes);
 app.use("/api/siem", siemRoutes);
 app.use("/api/threat-intel", threatIntelRoutes);
+app.use("/api/soar", soarRoutes);
 app.use("/api", ipRoutes);
 
 // Root and health endpoints
