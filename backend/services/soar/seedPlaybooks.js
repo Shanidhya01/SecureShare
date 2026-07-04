@@ -61,6 +61,25 @@ export async function ensureSeedPlaybooks() {
         { type: "raiseIncident", params: { title: "Known malicious IOC matched", severity: "CRITICAL" }, continueOnFailure: true },
         { type: "notifyAdmin", params: { title: "Malicious IOC detected", severity: "CRITICAL" }, continueOnFailure: true }
       ]
+    },
+    {
+      name: "Account Lockdown Response",
+      description: "Phase 9: forces an MFA step-up on the account's next login and notifies the owner after repeated failed login attempts.",
+      category: "Account Lockdown Response",
+      steps: [
+        { type: "requireMfaStepUp", params: {}, continueOnFailure: true },
+        { type: "notifyUser", params: { title: "Repeated failed login attempts detected", severity: "HIGH" }, continueOnFailure: true }
+      ]
+    },
+    {
+      name: "Critical Risk Response",
+      description: "Phase 9.5: forces an MFA step-up, raises an incident, and notifies the owner for impossible-travel or otherwise Critical-risk logins.",
+      category: "Critical Risk Response",
+      steps: [
+        { type: "requireMfaStepUp", params: {}, continueOnFailure: true },
+        { type: "raiseIncident", params: { title: "Critical-risk login detected", severity: "CRITICAL" }, continueOnFailure: true },
+        { type: "notifyUser", params: { title: "Unusual sign-in activity detected on your account", severity: "CRITICAL" }, continueOnFailure: true }
+      ]
     }
   ]);
 
@@ -73,6 +92,9 @@ export async function ensureSeedPlaybooks() {
     { name: "Auto-respond to signature failures", trigger: "SIGNATURE_FAILED", playbookId: byName["Credential Leak Response"]._id, priority: 20 },
     { name: "Auto-respond to new devices", trigger: "NEW_DEVICE", playbookId: byName["Suspicious Device Response"]._id, priority: 50, enabled: false },
     { name: "Auto-respond to known malicious IOCs", trigger: "IOC_MATCH", playbookId: byName["Known Malicious IOC Response"]._id, priority: 10 },
-    { name: "Auto-respond to critical MITRE techniques", trigger: "MITRE_CRITICAL", playbookId: byName["Known Malicious IOC Response"]._id, priority: 10 }
+    { name: "Auto-respond to critical MITRE techniques", trigger: "MITRE_CRITICAL", playbookId: byName["Known Malicious IOC Response"]._id, priority: 10 },
+    { name: "Auto-respond to repeated failed logins", trigger: "MULTIPLE_FAILED_LOGINS", playbookId: byName["Account Lockdown Response"]._id, priority: 10 },
+    { name: "Auto-respond to impossible travel", trigger: "IMPOSSIBLE_TRAVEL", playbookId: byName["Critical Risk Response"]._id, priority: 5 },
+    { name: "Auto-respond to critical-risk logins", trigger: "CRITICAL_RISK_LOGIN", playbookId: byName["Critical Risk Response"]._id, priority: 5 }
   ]);
 }

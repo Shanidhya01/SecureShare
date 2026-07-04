@@ -6,6 +6,65 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 9.5 — Enterprise Authentication & Adaptive Access
+**2026-07-04**
+
+Sharpens Phase 9's adaptive-auth foundation - a four-tier (LOW/MEDIUM/HIGH/CRITICAL) risk engine with VPN/Tor/impossible-travel signals - and fixes two policies that phase defined but never enforced (device restrictions, session timeout). No Phase 9 file was rewritten; every change here extends the same modules.
+
+### Added
+- `backend/services/iam/networkIntel.js` (`checkNetworkIntel`) - local-only, honestly-scoped VPN/Tor heuristic detection (Phase 7 IOC tags + a small illustrative Tor directory-node list); no external IP-intelligence API is called during login
+- `detectImpossibleTravel()` in `backend/services/iam/loginRiskEngine.js` - pure country-level, time-window impossible-travel check (a documented simplification; no lat/long geo-database exists in this codebase)
+- `evaluateDevicePolicy()`, `evaluatePasswordPolicy()`, `evaluateSessionTimeout()` in `backend/services/iam/policyEngine.js` - pure evaluators for the two Phase 9 policy fields that previously had no enforcement, plus a new password policy
+- `SecurityPolicy.allowedDeviceIds`, `minPasswordLength`, `requirePasswordComplexity` fields, plus a 15-second in-memory cache on `getPolicy()` (needed now that `auth.middleware.js` calls it on every authenticated request)
+- New `impossible_travel` SIEM event (severity CRITICAL) and two new SOAR triggers - `IMPOSSIBLE_TRAVEL` (unconditional) and `CRITICAL_RISK_LOGIN` (conditional on `step_up_auth`'s `riskLevel` metadata) - firing a newly seeded "Critical Risk Response" playbook (`requireMfaStepUp` → `raiseIncident` → `notifyUser`)
+- Dedicated Trusted Devices dashboard: `frontend/app/identity/devices/page.tsx`
+- `GET /api/iam/stats` + an Analytics section on `/identity` - Risk Levels, MFA Usage, Countries, Devices, and Failed Logins charts
+- 20 additional tests in `backend/tests/iam.test.js` (44 total in that file): the four-tier risk model, VPN/Tor/impossible-travel signals, the three new policy evaluators, the two new SOAR trigger mappings, and an end-to-end integration test chaining risk scoring → event shape → SOAR trigger → playbook execution
+
+### Changed
+- `backend/services/iam/loginRiskEngine.js`'s `scoreLogin()` reweighted for six signals and four risk tiers (thresholds: Critical ≥80, High ≥55, Medium ≥25) - `iam.test.js`'s risk-scoring assertions updated to match
+- `backend/controllers/auth.controller.js`'s `login()` now also gathers VPN/Tor/impossible-travel signals, enforces the (now-hard) device-restriction policy before any device/session bookkeeping, and forces step-up on `Critical` risk in addition to `High`
+- `backend/controllers/auth.controller.js`'s `register()` now enforces the configurable password policy
+- `backend/middleware/auth.middleware.js` now enforces `sessionTimeoutMinutes` on every authenticated request (previously defined in the schema but never checked)
+- `backend/services/iam/sessionIssuer.js`'s `login` SIEM event now carries `riskLevel`/`riskScore`/`authMethod` in its metadata, powering the new analytics endpoint
+- `backend/services/siem/eventCatalog.js`: the `login` type's `siemType` relabeled `LOGIN_SUCCESS` (spec-aligned naming); `LOGIN` kept in `SecurityEvent`'s enum only for historical-document validity
+- `backend/models/AutomationRule.js`'s `trigger` enum gained `IMPOSSIBLE_TRAVEL`/`CRITICAL_RISK_LOGIN`; `backend/services/soar/ruleMatcher.js`'s `eventTriggerFor()` gained the corresponding mappings
+- `frontend/app/identity/page.tsx` gained an Analytics section, a link to `/identity/devices`, and Policy form fields for the three new policy settings
+
+---
+
+## Phase 9 — Identity & Access Management (IAM) + Multi-Factor Authentication
+**2026-07-04**
+
+TOTP MFA, WebAuthn passkeys, a fuller RBAC role model, configurable security policies, and risk-based adaptive authentication - layered additively onto the existing JWT/password login flow. Existing authentication is unchanged for every account that hasn't opted into these features.
+
+### Added
+- `backend/services/iam/totp.js`, `recoveryCodes.js` - TOTP generation/verification (`otplib`) and bcrypt-hashed, single-use recovery codes
+- `backend/controllers/mfa.controller.js` + `routes/mfa.routes.js` (`/api/mfa`) - two-step enrollment (`setup`/`verify`), `disable`, `recovery/regenerate`, `status`, and `verify-login` (the second step of an MFA-gated login)
+- `backend/models/Passkey.js`, `WebAuthnChallenge.js`, `backend/controllers/passkey.controller.js` + `routes/passkey.routes.js` (`/api/passkeys`, `/api/auth/passkey`) - full WebAuthn register/login/remove flow via `@simplewebauthn/server` (backend) and `@simplewebauthn/browser` (frontend)
+- `backend/models/SecurityPolicy.js`, `backend/services/iam/policyEngine.js` - a global, admin-configurable policy (require MFA, password expiry, session timeout, max sessions, allowed countries, block untrusted devices) with pure, unit-tested evaluators
+- `backend/services/iam/loginRiskEngine.js` (`scoreLogin`) - pure adaptive-auth scoring from new-device/IOC-matched-IP/country-change signals
+- `backend/services/iam/sessionIssuer.js` (`issueSessionAndToken`) - the single function (extracted from the original inline `login()`) that creates a Session, updates Device state, signs the JWT, and logs SIEM events for every login path (password, MFA-verified, passkey)
+- `backend/services/iam/loginFailureTracker.js` - logs `login_failed` with a rolling 15-minute count, finally giving Phase 8's dormant `MULTIPLE_FAILED_LOGINS` trigger a real source
+- `backend/services/soar/actions/requireMfaStepUp.js` - new SOAR action; a seeded "Account Lockdown Response" playbook (`requireMfaStepUp` → `notifyUser`) now fires on repeated failed logins
+- `backend/middleware/requireRole.js` - finer-grained RBAC gate (applied only to new Phase 9 endpoints)
+- IAM REST API (`/api/iam/policy`, `/roles`, `/users`, `/users/:id/role`, `/login-history`)
+- Identity dashboard (`frontend/app/identity/page.tsx`) - MFA enrollment/QR/recovery codes, Passkeys, Trusted Devices, Sessions, Roles (admin), Policies (admin), Login History
+- Login page (`frontend/app/login/page.tsx`) gained an MFA code-entry step and a "Sign in with a passkey" option, both additive to the existing password form
+- `backend/tests/iam.test.js` - 24 unit tests: TOTP round-trip, recovery code lifecycle, adaptive-auth scoring, policy evaluators, and the new `login_failed` → `MULTIPLE_FAILED_LOGINS` SOAR trigger mapping
+
+### Changed
+- `backend/models/User.js` gained `role` (5-value enum, default `user`), `mfa` (enabled/secret/pendingSecret/recoveryCodeHashes/enabledAt), `passwordChangedAt` (defaults to account creation), `forceMfaOnNextLogin` - all additive with safe defaults
+- `backend/models/Device.js` gained `mfaTrustedUntil` for MFA trusted-device support
+- `backend/controllers/auth.controller.js`'s `login()` now runs adaptive-auth scoring, security-policy checks, and MFA gating before finalizing a session via the new `issueSessionAndToken()` - the device/session/JWT-issuing logic itself is unchanged, just relocated
+- `backend/middleware/requireAdmin.js` now accepts either the original `isAdmin` boolean or `role` being `administrator`/`org_owner` - every existing Phase 8 admin account keeps working unchanged
+- `backend/services/soar/ruleMatcher.js`'s `eventTriggerFor()` gained a conditional mapping (`login_failed` with `metadata.recentFailureCount >= 3` → `MULTIPLE_FAILED_LOGINS`), the same pattern already used for `MITRE_CRITICAL`
+- `backend/services/siem/eventCatalog.js`/`SecurityEvent.js` extended (additive) with `login_failed`, `mfa_success`, `mfa_failed`, `passkey_login`, `device_trusted`, `policy_block`, `step_up_auth`, and a new `IAM` category (also added to `Incident.category`)
+- Added "Identity & Access" to the main navigation (`frontend/components/shell/navItems.ts`)
+- New dependencies: `otplib`, `qrcode`, `@simplewebauthn/server` (backend); `@simplewebauthn/browser` (frontend)
+
+---
+
 ## Phase 8 — Security Orchestration, Automation & Response (SOAR)
 **2026-07-04**
 

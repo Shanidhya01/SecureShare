@@ -4,11 +4,15 @@
  * testable (see backend/tests/soarEngine.test.js) without touching Mongo.
  *
  * eventTriggerFor() maps an already-logged SecurityEvent onto one of AutomationRule's `trigger`
- * enum values. Two triggers (SESSION_COMPROMISED, MULTIPLE_FAILED_LOGINS) have no emitter
- * anywhere in this codebase yet - no phase currently logs a failed-login or session-compromise
- * event - so they're accepted by the schema/UI for forward compatibility but never fire today.
- * This is documented, not a bug: adding failed-login logging would mean touching Phase 1/3 auth
- * flow, which is out of scope for a purely additive orchestration layer.
+ * enum values. SESSION_COMPROMISED still has no emitter anywhere in this codebase - accepted by
+ * the schema/UI for forward compatibility but never fires today. MULTIPLE_FAILED_LOGINS, however,
+ * went live in Phase 9 (IAM): backend/services/iam/loginFailureTracker.js now logs a
+ * `login_failed` event carrying a rolling 15-minute failure count in `metadata.recentFailureCount`
+ * on every bad password/MFA attempt, and the conditional mapping below fires once that count
+ * reaches 3 - the same "map based on event metadata" pattern already used for MITRE_CRITICAL.
+ * Phase 9.5 adds two more: IMPOSSIBLE_TRAVEL (unconditional - every `impossible_travel` event is
+ * inherently critical) and CRITICAL_RISK_LOGIN (conditional on `step_up_auth`'s `riskLevel`
+ * metadata, set by backend/services/iam/loginRiskEngine.js's four-tier scoring).
  */
 
 // A curated subset of MITRE tactics considered "critical" for the MITRE_CRITICAL trigger -
@@ -30,6 +34,12 @@ export function eventTriggerFor(event) {
       return "YARA_MATCH";
     case "new_device":
       return "NEW_DEVICE";
+    case "login_failed":
+      return (event.metadata?.recentFailureCount || 0) >= 3 ? "MULTIPLE_FAILED_LOGINS" : null;
+    case "impossible_travel":
+      return "IMPOSSIBLE_TRAVEL";
+    case "step_up_auth":
+      return event.metadata?.riskLevel === "Critical" ? "CRITICAL_RISK_LOGIN" : null;
     case "mitre_mapping": {
       const techniques = event.metadata?.techniques || [];
       const isCritical = techniques.some((t) => CRITICAL_MITRE_TACTICS.includes(t.tactic));

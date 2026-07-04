@@ -1,5 +1,7 @@
 import jwt from "jsonwebtoken";
 import Session from "../models/Session.js";
+import { getPolicy } from "../models/SecurityPolicy.js";
+import { evaluateSessionTimeout } from "../services/iam/policyEngine.js";
 
 export default async function (req, res, next) {
   const authHeader = req.headers.authorization;
@@ -18,6 +20,18 @@ export default async function (req, res, next) {
       if (!session || session.revoked) {
         return res.status(403).json({ error: "Session revoked" });
       }
+
+      // Phase 9.5 (IAM): configurable session idle timeout - checked against the session's
+      // lastActiveAt BEFORE it's refreshed below, so this compares idle time since the previous
+      // request, not this one. getPolicy() is short-TTL-cached (see SecurityPolicy.js), so this
+      // adds no real DB load to the hot request path.
+      const policy = await getPolicy();
+      if (evaluateSessionTimeout(policy, session.lastActiveAt).expired) {
+        session.revoked = true;
+        await session.save();
+        return res.status(403).json({ error: "Session expired due to inactivity" });
+      }
+
       session.lastActiveAt = new Date();
       session.save().catch(() => {}); // best-effort, don't block the request on this write
     }

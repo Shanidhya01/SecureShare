@@ -14,6 +14,9 @@ import dlpRoutes from "./routes/dlp.routes.js";
 import siemRoutes from "./routes/siem.routes.js";
 import threatIntelRoutes from "./routes/threatIntel.routes.js";
 import soarRoutes from "./routes/soar.routes.js";
+import mfaRoutes from "./routes/mfa.routes.js";
+import passkeyRoutes, { passkeyLoginRouter } from "./routes/passkey.routes.js";
+import iamRoutes from "./routes/iam.routes.js";
 import ipRoutes from "./routes/ip.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
@@ -55,6 +58,10 @@ app.use("/api/dlp", dlpRoutes);
 app.use("/api/siem", siemRoutes);
 app.use("/api/threat-intel", threatIntelRoutes);
 app.use("/api/soar", soarRoutes);
+app.use("/api/mfa", mfaRoutes);
+app.use("/api/passkeys", passkeyRoutes);
+app.use("/api/auth/passkey", passkeyLoginRouter);
+app.use("/api/iam", iamRoutes);
 app.use("/api", ipRoutes);
 
 // Root and health endpoints

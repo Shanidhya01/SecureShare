@@ -18,6 +18,7 @@ import notifyAdmin from "./notifyAdmin.js";
 import sendEmail from "./sendEmail.js";
 import generateSiemEvent from "./generateSiemEvent.js";
 import generateAuditLog from "./generateAuditLog.js";
+import requireMfaStepUp from "./requireMfaStepUp.js";
 
 export const ACTION_HANDLERS = {
   quarantineFile,
@@ -32,7 +33,8 @@ export const ACTION_HANDLERS = {
   notifyAdmin,
   sendEmail,
   generateSiemEvent,
-  generateAuditLog
+  generateAuditLog,
+  requireMfaStepUp
 };
 
 export const ACTION_TYPES = Object.keys(ACTION_HANDLERS);

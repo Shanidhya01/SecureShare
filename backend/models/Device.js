@@ -22,7 +22,12 @@ const deviceSchema = new mongoose.Schema(
     lastIp: String,
 
     trusted: { type: Boolean, default: true },
-    revoked: { type: Boolean, default: false }
+    revoked: { type: Boolean, default: false },
+
+    // Phase 9 (MFA trusted-device support): set when a user checks "trust this device" during
+    // MFA verification (POST /api/mfa/verify-login). While in the future, login skips the MFA
+    // challenge on this device - unless adaptive auth (loginRiskEngine) forces a step-up anyway.
+    mfaTrustedUntil: { type: Date, default: null }
   },
   { timestamps: true }
 );

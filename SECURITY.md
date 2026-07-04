@@ -56,6 +56,40 @@ Configurable Automation Rules watch the unified SecurityEvent stream Phase 6 alr
 
 **What Phase 8 does not do**: it does not add new detection capability — every trigger is sourced from an event a prior phase already produces. A playbook step failing never blocks or fails the original request that triggered it (e.g. a failed quarantine action doesn't undo an upload); failures are recorded for visibility on the `/soar` dashboard, not silently swallowed. No existing model, route, or controller behavior was changed — every integration point (the `isAdmin` field, the JWT claim, the `Incident` schema additions, the `logSecurityEvent` hook) is additive.
 
+### Identity & Access Management + Multi-Factor Authentication (Phase 9)
+
+Login gains TOTP MFA (`otplib`), WebAuthn passkeys (`@simplewebauthn/server`/`browser`), a five-level role model, a configurable global security policy, and risk-based step-up — all layered on top of the email+password flow every prior phase already relies on. **This is the one requirement that overrides all others in this phase: existing JWT authentication and plain password login must keep working unchanged for every account that hasn't opted into MFA/passkeys.** It does.
+
+**Two-step MFA enrollment, never a half-enabled state**: `POST /api/mfa/setup` generates a secret and stores it as `User.mfa.pendingSecret` — inert until `POST /api/mfa/verify` proves possession with a real code, at which point (and only then) it's promoted to `User.mfa.secret` and `enabled: true`. An abandoned enrollment leaves the account exactly as it was.
+
+**MFA-gated login is a two-request exchange, not a session-in-waiting**: when MFA is required, `POST /api/auth/login` returns `202 {mfaRequired: true, mfaToken}` — never a real session token. `mfaToken` is a JWT signed with `purpose: "mfa"` and a 5-minute expiry; `POST /api/mfa/verify-login` is the only endpoint that accepts it, and only after checking that exact claim, so it can't be replayed as (or mistaken for) a real session credential.
+
+**Recovery codes are bcrypt-hashed, single-use, shown once**: `User.mfa.recoveryCodeHashes` never stores plaintext; `services/iam/recoveryCodes.js`'s `consumeRecoveryCode()` removes a matched hash from the array so it can never be reused.
+
+**RBAC is additive over Phase 8's admin flag, not a replacement**: `backend/middleware/requireAdmin.js` now accepts *either* `User.isAdmin` *or* `role` being `administrator`/`org_owner` — every account granted admin access under Phase 8's original mechanism keeps working exactly as before. Role changes themselves require `org_owner` (`requireRole.js`), since granting `administrator` is itself a privilege-escalation-sensitive action.
+
+**Security policy enforcement is deliberately mostly soft**: `services/iam/policyEngine.js`'s evaluators return flags (`passwordExpired`, `mfaSetupRequired`) rather than denying login, because this application has no self-service password-reset or account-unlock flow — a hard block here would be a permanent, unrecoverable lockout, not a security improvement. The single hard block is the country restriction (`evaluateCountryPolicy`), since "log in again from an allowed location" is an actually-recoverable failure mode, unlike the others.
+
+**Adaptive authentication never blocks, only escalates or nudges**: `services/iam/loginRiskEngine.js`'s `scoreLogin()` is a pure function over three signals (new device, IP matching a local Phase 7 IOC record, country change) — network calls are deliberately excluded from the login path to keep it fast and to avoid Phase 7's optional external providers becoming a login-latency or availability dependency. A `High` score forces a step-up challenge if the account has MFA/a passkey; otherwise it only logs and recommends, since forcing enrollment mid-login isn't possible.
+
+**Closing a real gap while adding SOAR integration**: prior to this phase, a failed login attempt was never logged anywhere — Phase 8 shipped with a `MULTIPLE_FAILED_LOGINS` automation trigger that could never fire because nothing produced the event it needed. `services/iam/loginFailureTracker.js` now logs `login_failed` with a rolling failure count on every bad password or MFA code, giving that trigger — and the newly seeded "Account Lockdown Response" playbook — a real source. Successful logins are entirely unaffected by this addition.
+
+**What Phase 9 does not do**: it does not replace or weaken the existing JWT-based session model — MFA, passkeys, and policies all end at the same `issueSessionAndToken()` that plain password login always used. It does not implement real email delivery (see Phase 8's note above — `sendEmail`-style semantics remain in-app only). It does not force MFA on any account that hasn't explicitly enrolled or been targeted by an admin-configured policy/automation action.
+
+### Enterprise Authentication & Adaptive Access (Phase 9.5)
+
+Sharpens Phase 9's risk engine and, importantly, fixes two policies that phase defined but never actually enforced — `blockUntrustedDevices` and `sessionTimeoutMinutes` were schema fields with no code path checking them until this phase.
+
+**Risk scoring is honest about its own limitations**: `services/iam/loginRiskEngine.js`'s four-tier score now includes VPN/Tor and impossible-travel signals, but `services/iam/networkIntel.js` explicitly documents that VPN/Tor detection is local-only (no external IP-intelligence subscription exists in this codebase) and that its illustrative Tor-node list is not exhaustive — real coverage requires an admin importing a maintained exit-node list into the Phase 7 `IOC` collection. Similarly, "impossible travel" is a country-level time-window heuristic, not a geodesic distance/speed calculation, because this codebase has no lat/long geo-database. Both limitations are stated in the code, not glossed over.
+
+**Device restriction is a hard block, deliberately**: unlike password expiry or MFA-enrollment (Phase 9's soft blocks, chosen because this app has no account-recovery flow), `evaluateDevicePolicy()` denies outright. The reasoning is the same "is the recovery trivial?" test Phase 9 already applied to country restrictions — logging in from a device the account has already used, or getting added to an admin's allow-list, is always available to the genuine owner.
+
+**Session timeout is enforced on every request, not just at login**: `backend/middleware/auth.middleware.js` now checks `evaluateSessionTimeout()` against the session's `lastActiveAt` before refreshing it, so an idle session is actually revoked rather than the policy field being silently decorative. A short in-memory cache on `SecurityPolicy.getPolicy()` (15 seconds) keeps this from adding a database round-trip to every authenticated request.
+
+**No new detection capability, only better-informed automation**: the two new SOAR triggers (`IMPOSSIBLE_TRAVEL`, `CRITICAL_RISK_LOGIN`) route through the exact same `soarEngine.js`/`playbookRunner.js` Phase 8 built — this phase adds signals and a seeded playbook, not new orchestration machinery.
+
+**What Phase 9.5 does not do**: it does not add a commercial-grade IP intelligence or geolocation integration (documented as a deployment-time extension point, not a built-in guarantee). It does not retroactively enforce the new password policy against existing accounts. It does not change what a JWT looks like, how sessions are revoked, or any Phase 1-9 detection/crypto logic.
+
 ---
 
 ## Supported Algorithms

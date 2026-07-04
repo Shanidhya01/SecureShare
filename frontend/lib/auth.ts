@@ -17,5 +17,17 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
 
 export function getIsAdminFromToken(token: string | null): boolean {
   if (!token) return false;
-  return !!decodeJwtPayload(token)?.isAdmin;
+  const payload = decodeJwtPayload(token);
+  const role = payload?.role as string | undefined;
+  return !!payload?.isAdmin || role === "administrator" || role === "org_owner";
+}
+
+/** Phase 9 (IAM/RBAC): the fuller role claim, alongside the legacy isAdmin boolean above. */
+export function getRoleFromToken(token: string | null): string {
+  if (!token) return "user";
+  return (decodeJwtPayload(token)?.role as string) || "user";
+}
+
+export function getIsOrgOwnerFromToken(token: string | null): boolean {
+  return getRoleFromToken(token) === "org_owner";
 }

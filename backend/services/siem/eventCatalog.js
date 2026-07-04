@@ -17,7 +17,10 @@ export const TYPE_META = {
   dlp_sensitive_data_detected: { siemType: "DLP_SENSITIVE_DATA", severity: "LOW", category: "DLP", label: "Sensitive Data Detected" },
 
   // --- New types (Phase 6) ---
-  login: { siemType: "LOGIN", severity: "INFO", category: "AUTH", label: "Login" },
+  // Phase 9.5: siemType relabeled LOGIN -> LOGIN_SUCCESS to match that phase's spec naming.
+  // "LOGIN" is kept in the SecurityEvent.siemType enum below purely so historical documents
+  // written before this change remain valid - no code reads/writes "LOGIN" going forward.
+  login: { siemType: "LOGIN_SUCCESS", severity: "INFO", category: "AUTH", label: "Login" },
   register: { siemType: "REGISTER", severity: "INFO", category: "AUTH", label: "Account Registered" },
   session_created: { siemType: "SESSION_CREATED", severity: "INFO", category: "SESSION", label: "Session Created" },
   upload: { siemType: "UPLOAD", severity: "INFO", category: "UPLOAD", label: "File Uploaded" },
@@ -43,12 +46,24 @@ export const TYPE_META = {
   automation_skipped: { siemType: "AUTOMATION_SKIPPED", severity: "INFO", category: "AUTOMATION", label: "Automation Skipped" },
   session_revoked_automatically: { siemType: "SESSION_REVOKED_AUTOMATICALLY", severity: "MEDIUM", category: "AUTOMATION", label: "Session Revoked Automatically" },
   file_quarantined_automatically: { siemType: "FILE_QUARANTINED_AUTOMATICALLY", severity: "HIGH", category: "AUTOMATION", label: "File Quarantined Automatically" },
-  user_notified: { siemType: "USER_NOTIFIED", severity: "INFO", category: "AUTOMATION", label: "User Notified" }
+  user_notified: { siemType: "USER_NOTIFIED", severity: "INFO", category: "AUTOMATION", label: "User Notified" },
+
+  // --- New types (Phase 9: IAM / MFA) ---
+  login_failed: { siemType: "LOGIN_FAILED", severity: "MEDIUM", category: "IAM", label: "Login Failed" },
+  mfa_success: { siemType: "MFA_SUCCESS", severity: "INFO", category: "IAM", label: "MFA Success" },
+  mfa_failed: { siemType: "MFA_FAILED", severity: "MEDIUM", category: "IAM", label: "MFA Failed" },
+  passkey_login: { siemType: "PASSKEY_LOGIN", severity: "INFO", category: "IAM", label: "Passkey Login" },
+  device_trusted: { siemType: "DEVICE_TRUSTED", severity: "LOW", category: "IAM", label: "Device Trusted" },
+  policy_block: { siemType: "POLICY_BLOCK", severity: "HIGH", category: "IAM", label: "Policy Block" },
+  step_up_auth: { siemType: "STEP_UP_AUTH", severity: "MEDIUM", category: "IAM", label: "Step-Up Authentication" },
+
+  // --- New types (Phase 9.5: Adaptive Authentication) ---
+  impossible_travel: { siemType: "IMPOSSIBLE_TRAVEL", severity: "CRITICAL", category: "IAM", label: "Impossible Travel" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM"
 ];
 
 export function resolveEventMeta(type) {

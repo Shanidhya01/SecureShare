@@ -4,11 +4,12 @@ import Link from "next/link";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, Lock, Mail, AlertCircle, Loader, ShieldCheck, ScanSearch, FileCheck2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, AlertCircle, Loader, ShieldCheck, ScanSearch, FileCheck2, KeyRound, Fingerprint } from "lucide-react";
 import toast from "react-hot-toast";
 import { getDeviceId } from "@/lib/security/fingerprint";
 import { apiErrorMessage } from "@/lib/errors";
 import { fadeInUp } from "@/lib/motion";
+import { loginWithPasskey } from "@/lib/webauthn";
 
 const highlights = [
   { icon: Lock, text: "Zero-knowledge AES-256 encryption" },
@@ -23,7 +24,59 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+
+  // Phase 9 (IAM): set once the backend responds 202 {mfaRequired:true} - the login form is
+  // replaced with a code-entry step until this resolves.
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [trustDevice, setTrustDevice] = useState(false);
+
   const router = useRouter();
+
+  const completeLogin = (token: string, userInfo: { email: string; name?: string }) => {
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(userInfo));
+    try { window.dispatchEvent(new Event("auth:changed")); } catch {}
+    toast.success("Signed in successfully");
+    router.push("/dashboard");
+  };
+
+  const submitMfaCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaToken || !mfaCode.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.post("/mfa/verify-login", { mfaToken, code: mfaCode.trim(), trustDevice });
+      completeLogin(res.data.token, res.data.user ?? { email });
+    } catch (err: unknown) {
+      setError(apiErrorMessage(err, "Invalid code. Please try again."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!email.trim()) {
+      setError("Enter your email above, then use the passkey option");
+      return;
+    }
+    setPasskeyLoading(true);
+    setError("");
+    try {
+      let deviceId: string | undefined;
+      try {
+        deviceId = await getDeviceId();
+      } catch {}
+      const data = await loginWithPasskey(email, deviceId);
+      completeLogin(data.token, data.user ?? { email });
+    } catch (err: unknown) {
+      setError(apiErrorMessage(err, "Passkey sign-in failed."));
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
 
   const validateForm = () => {
     if (!email.trim()) {
@@ -65,15 +118,17 @@ export default function Login() {
 
       const res = await api.post("/auth/login", { email, password, deviceId });
 
+      if (res.data?.mfaRequired) {
+        // Phase 9: password check passed but MFA is required - swap to the code-entry step
+        // instead of completing login.
+        setMfaToken(res.data.mfaToken);
+        return;
+      }
+
       if (res.data?.token) {
-        localStorage.setItem("token", res.data.token);
-        // Store user info (fallback to entered email if backend doesn't return user)
-        const userInfo = res.data.user ?? { email };
-        localStorage.setItem("user", JSON.stringify(userInfo));
-        // notify other components (same tab) about auth state change
-        try { window.dispatchEvent(new Event("auth:changed")); } catch {}
-        toast.success("Signed in successfully");
-        router.push("/dashboard");
+        completeLogin(res.data.token, res.data.user ?? { email });
+        if (res.data.mfaSetupRequired) toast("Your organization requires MFA - set it up from /identity", { icon: "🔐" });
+        if (res.data.stepUpRecommended) toast("Unusual login detected - consider enabling MFA", { icon: "⚠️" });
       } else {
         setError("Invalid response from server");
       }
@@ -131,70 +186,126 @@ export default function Login() {
             </div>
           )}
 
-          <form onSubmit={login} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-foreground font-medium text-sm mb-2">Email address</label>
-              <div className="relative">
-                <Mail size={18} className="absolute left-3 top-3.5 text-muted-foreground" />
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError("");
-                  }}
-                  placeholder="you@example.com"
-                  className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus:border-primary transition-all"
-                  disabled={loading}
-                />
+          {mfaToken ? (
+            // Phase 9 (IAM): second step of an MFA-gated login - a TOTP code or a recovery code.
+            <form onSubmit={submitMfaCode} className="space-y-4">
+              <div>
+                <label htmlFor="mfaCode" className="block text-foreground font-medium text-sm mb-2">Authentication code</label>
+                <div className="relative">
+                  <KeyRound size={18} className="absolute left-3 top-3.5 text-muted-foreground" />
+                  <input
+                    id="mfaCode"
+                    type="text"
+                    inputMode="text"
+                    autoFocus
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    placeholder="6-digit code or recovery code"
+                    className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus:border-primary transition-all"
+                    disabled={loading}
+                  />
+                </div>
               </div>
-            </div>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} className="rounded border-border" />
+                Trust this device for 30 days
+              </label>
+              <motion.button
+                type="submit"
+                disabled={loading}
+                whileTap={{ scale: 0.98 }}
+                className="w-full py-3 mt-2 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 disabled:bg-muted transition-all shadow-lg shadow-primary/20 disabled:shadow-none flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              >
+                {loading ? <Loader size={20} className="animate-spin" /> : "Verify"}
+              </motion.button>
+              <button type="button" onClick={() => { setMfaToken(null); setMfaCode(""); }} className="w-full text-center text-sm text-muted-foreground hover:text-foreground">
+                Back to login
+              </button>
+            </form>
+          ) : (
+            <>
+              <form onSubmit={login} className="space-y-4">
+                <div>
+                  <label htmlFor="email" className="block text-foreground font-medium text-sm mb-2">Email address</label>
+                  <div className="relative">
+                    <Mail size={18} className="absolute left-3 top-3.5 text-muted-foreground" />
+                    <input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        setError("");
+                      }}
+                      placeholder="you@example.com"
+                      className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus:border-primary transition-all"
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
 
-            <div>
-              <label htmlFor="password" className="block text-foreground font-medium text-sm mb-2">Password</label>
-              <div className="relative">
-                <Lock size={18} className="absolute left-3 top-3.5 text-muted-foreground" />
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError("");
-                  }}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-11 py-3 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus:border-primary transition-all"
+                <div>
+                  <label htmlFor="password" className="block text-foreground font-medium text-sm mb-2">Password</label>
+                  <div className="relative">
+                    <Lock size={18} className="absolute left-3 top-3.5 text-muted-foreground" />
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setError("");
+                      }}
+                      placeholder="••••••••"
+                      className="w-full pl-10 pr-11 py-3 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus:border-primary transition-all"
+                      disabled={loading}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-3.5 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                      disabled={loading}
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+
+                <motion.button
+                  type="submit"
                   disabled={loading}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-3 top-3.5 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                  disabled={loading}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full py-3 mt-2 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 disabled:bg-muted transition-all shadow-lg shadow-primary/20 disabled:shadow-none flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
+                  {loading ? (
+                    <>
+                      <Loader size={20} className="animate-spin" />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </motion.button>
+              </form>
 
-            <motion.button
-              type="submit"
-              disabled={loading}
-              whileTap={{ scale: 0.98 }}
-              className="w-full py-3 mt-2 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 disabled:bg-muted transition-all shadow-lg shadow-primary/20 disabled:shadow-none flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-            >
-              {loading ? (
-                <>
-                  <Loader size={20} className="animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                "Sign In"
-              )}
-            </motion.button>
-          </form>
+              <div className="my-4 flex items-center gap-3">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-muted-foreground text-xs">or</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+
+              <button
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={passkeyLoading}
+                className="w-full py-3 bg-card border border-border text-foreground font-semibold rounded-lg hover:bg-muted transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {passkeyLoading ? <Loader size={18} className="animate-spin" /> : <Fingerprint size={18} className="text-primary" />}
+                Sign in with a passkey
+              </button>
+            </>
+          )}
 
           <div className="my-6 flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />

@@ -22,7 +22,11 @@ const securityEventSchema = new mongoose.Schema({
       "ioc_match", "ioc_lookup", "threat_intel_match", "mitre_mapping", "yara_match", "provider_error",
       // Phase 8: SOAR
       "playbook_started", "playbook_completed", "playbook_failed", "automation_triggered",
-      "automation_skipped", "session_revoked_automatically", "file_quarantined_automatically", "user_notified"
+      "automation_skipped", "session_revoked_automatically", "file_quarantined_automatically", "user_notified",
+      // Phase 9: IAM / MFA
+      "login_failed", "mfa_success", "mfa_failed", "passkey_login", "device_trusted", "policy_block", "step_up_auth",
+      // Phase 9.5: Adaptive Authentication
+      "impossible_travel"
     ]
   },
   message: String,
@@ -52,13 +56,18 @@ const securityEventSchema = new mongoose.Schema({
       "IOC_MATCH", "IOC_LOOKUP", "THREAT_INTEL_MATCH", "MITRE_MAPPING", "YARA_MATCH", "PROVIDER_ERROR",
       // Phase 8: SOAR
       "PLAYBOOK_STARTED", "PLAYBOOK_COMPLETED", "PLAYBOOK_FAILED", "AUTOMATION_TRIGGERED",
-      "AUTOMATION_SKIPPED", "SESSION_REVOKED_AUTOMATICALLY", "FILE_QUARANTINED_AUTOMATICALLY", "USER_NOTIFIED"
+      "AUTOMATION_SKIPPED", "SESSION_REVOKED_AUTOMATICALLY", "FILE_QUARANTINED_AUTOMATICALLY", "USER_NOTIFIED",
+      // Phase 9: IAM / MFA. "LOGIN" is superseded by "LOGIN_SUCCESS" in Phase 9.5 (see
+      // eventCatalog.js) but kept here so historical documents remain valid against this enum.
+      "LOGIN", "LOGIN_FAILED", "MFA_SUCCESS", "MFA_FAILED", "PASSKEY_LOGIN", "DEVICE_TRUSTED", "POLICY_BLOCK", "STEP_UP_AUTH",
+      // Phase 9.5: Adaptive Authentication
+      "LOGIN_SUCCESS", "IMPOSSIBLE_TRAVEL"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

@@ -794,7 +794,7 @@ Phase 6 gives every prior phase a unified event feed and correlates related even
 
 **Single interception point**: `backend/services/soar/soarEngine.js`'s `runSoarEngine(event)` is called from exactly one place - `backend/services/siem/siemLogger.js`, immediately after the existing correlation step - so no controller anywhere in the app had to change to wire this up. A guard (`event.category === "AUTOMATION"`) stops SOAR's own generated events (playbook start/complete/fail, notifications, etc.) from re-triggering itself.
 
-**Rule engine** (`backend/models/AutomationRule.js`, `backend/services/soar/ruleMatcher.js`): `matchRules(event, rules)` is a pure, DB-free function (mirroring `correlationEngine.js`'s `evaluateRules`) that maps an event to a trigger via `eventTriggerFor()`, filters to enabled rules whose trigger matches and whose `conditions` (field/operator/value triples, e.g. `severity gte High`) all pass, and sorts by ascending `priority`. Two trigger values in the spec (`SESSION_COMPROMISED`, `MULTIPLE_FAILED_LOGINS`) have no emitting event anywhere in this codebase yet - they're accepted by the schema for forward compatibility but never fire today, since adding failed-login logging would mean touching Phase 1/3's auth flow, out of scope for an additive orchestration layer.
+**Rule engine** (`backend/models/AutomationRule.js`, `backend/services/soar/ruleMatcher.js`): `matchRules(event, rules)` is a pure, DB-free function (mirroring `correlationEngine.js`'s `evaluateRules`) that maps an event to a trigger via `eventTriggerFor()`, filters to enabled rules whose trigger matches and whose `conditions` (field/operator/value triples, e.g. `severity gte High`) all pass, and sorts by ascending `priority`. `MULTIPLE_FAILED_LOGINS` had no emitting event when this phase shipped - Phase 9 (IAM) closed that gap; `SESSION_COMPROMISED` still has none and remains accepted for forward compatibility only.
 
 **Playbook engine** (`backend/models/Playbook.js`, `backend/services/soar/playbookRunner.js`): a named, reusable ordered list of steps, each mapping to a handler in the **action registry** (`backend/services/soar/actions/`, one file per action mirroring the `dlp/detectors/`-style module array): `quarantineFile`, `deleteFile`/`blockDownload` (soft-delete via the existing `File.revoked` field), `revokeSession`/`logoutUser` (the exact `Session.revoked` field `auth.middleware.js` already checks), `disableDevice` (`Device.revoked`/`trusted`), `markFileHighRisk`, `raiseIncident`, `notifyUser`/`notifyAdmin`/`sendEmail`, `generateSiemEvent`, `generateAuditLog`. Five example playbooks (Malware Response, Credential Leak Response, DLP Response, Suspicious Device Response, Known Malicious IOC Response) and their triggering rules are auto-seeded once at server startup (`ensureSeedPlaybooks()`).
 
@@ -809,6 +809,56 @@ Phase 6 gives every prior phase a unified event feed and correlates related even
 **Dashboard**: `/soar` (`frontend/app/soar/page.tsx`) - rule/playbook management tables (admin-only mutation controls), a Recent Executions timeline, a Failed Executions list, Automation Success Rate / Action Distribution / Top Rules / Top Playbooks / Automation Frequency charts, and CSV/JSON export.
 
 **Backward compatibility**: every schema change (`User.isAdmin`, `Incident`'s four new fields, the JWT's `isAdmin` claim) is additive with safe defaults - accounts, incidents, and tokens issued before Phase 8 are completely unaffected, and a rule/playbook misconfiguration or action failure never blocks the request that triggered it (playbook execution is fire-and-forget from `logSecurityEvent`'s perspective).
+
+---
+
+## 🔐 Phase 9: Identity & Access Management (IAM) + Multi-Factor Authentication
+
+Every prior phase secures what happens after login; Phase 9 strengthens login itself - TOTP MFA, WebAuthn passkeys, a fuller role model, configurable security policies, and risk-based step-up authentication - all layered onto the existing email+password flow without replacing it. **Plain password login for an account that hasn't opted into MFA/passkeys behaves exactly as before.**
+
+**Multi-Factor Authentication** (`backend/services/iam/totp.js`, `recoveryCodes.js`, `backend/controllers/mfa.controller.js`): TOTP via `otplib`, QR enrollment via `qrcode`, and one-time bcrypt-hashed recovery codes. Enrollment is two-step (`POST /api/mfa/setup` generates a *pending* secret, `POST /api/mfa/verify` only activates it once a real code proves possession), so an abandoned enrollment never half-enables MFA. Login integration: `backend/controllers/auth.controller.js`'s `login()` now returns `202 {mfaRequired, mfaToken}` instead of a token when MFA is required; `POST /api/mfa/verify-login` exchanges that short-lived, purpose-scoped token plus a code for the real session. **Trusted devices**: checking "trust this device" during MFA verification sets `Device.mfaTrustedUntil` 30 days out, skipping future challenges on that device (unless adaptive auth forces a step-up anyway).
+
+**The one place a login is finalized**: `backend/services/iam/sessionIssuer.js`'s `issueSessionAndToken()` was extracted verbatim from the original inline login logic, so plain password login, MFA-verified login, and passkey login all produce identical Session/Device/JWT/SIEM behavior instead of three subtly different implementations.
+
+**Passkeys (WebAuthn)** (`backend/models/Passkey.js`, `WebAuthnChallenge.js`, `backend/controllers/passkey.controller.js`, `@simplewebauthn/server` + `@simplewebauthn/browser`): full register/login/remove flow. RP ID/origin are read from `WEBAUTHN_RP_ID`/`WEBAUTHN_RP_NAME`/`WEBAUTHN_ORIGIN` (WebAuthn is inherently origin-bound - defaults to `localhost`/`http://localhost:3000` for local dev, must be set correctly in production).
+
+**RBAC**: `User.role` (`user` / `moderator` / `security_analyst` / `administrator` / `org_owner`, default `user`) is layered on top of Phase 8's `isAdmin` boolean rather than replacing it - `backend/middleware/requireAdmin.js` now accepts either, so every existing Phase 8 admin-gated SOAR route keeps working unchanged. A new `requireRole.js` middleware gates finer-grained Phase 9 endpoints only (e.g. changing someone's role requires `org_owner`) - never retrofitted onto prior phases' routes.
+
+**Security Policies** (`backend/models/SecurityPolicy.js`, `backend/services/iam/policyEngine.js`): a single global, admin-configurable policy (requireMFA, password expiry, session timeout, max sessions, allowed countries, block-untrusted-devices). Every evaluator is a pure function, and **most enforcement is a soft block** surfaced to the client (`passwordExpired`, `mfaSetupRequired` flags) rather than a hard denial, since this app has no self-service account-recovery flow - a hard block with no way back in would be a permanent lockout. The one hard block is the country restriction, since "try again from an allowed location" is actually recoverable.
+
+**Adaptive Authentication** (`backend/services/iam/loginRiskEngine.js`): a pure `scoreLogin()` weighing a new device, a login IP matching a local Phase 7 IOC record, and a country change from the account's last session (extended to a four-tier CRITICAL model with VPN/Tor/impossible-travel signals in [Phase 9.5](#-phase-95-enterprise-authentication--adaptive-access)). A `High` (or, as of Phase 9.5, `Critical`) score forces an MFA/passkey step-up on an otherwise-trusted device (or, if no second factor is enrolled, surfaces `stepUpRecommended: true` and logs a severity-matched event) - detect and nudge, never lock out.
+
+**SOAR integration**: failed logins are now logged (`login_failed`, previously nothing was recorded on a bad password at all) with a rolling 15-minute failure count in `metadata.recentFailureCount`. This finally gives Phase 8's dormant `MULTIPLE_FAILED_LOGINS` trigger a real source: `services/soar/ruleMatcher.js`'s `eventTriggerFor()` maps 3+ recent failures to that trigger, firing the newly seeded "Account Lockdown Response" playbook (`requireMfaStepUp` → `notifyUser`) - exactly the "Failed Logins → Require MFA → Notify User" flow, built entirely on the existing Phase 8 engine with no changes to `soarEngine.js`/`playbookRunner.js` themselves.
+
+**Dashboard**: `/identity` (`frontend/app/identity/page.tsx`) - MFA enrollment/QR/recovery codes, Passkeys, Trusted Devices, Sessions, Roles (admin), Policies (admin), and Login History.
+
+**Backward compatibility**: `User.mfa.enabled`, `role`, `passwordChangedAt`, `forceMfaOnNextLogin`, and `Device.mfaTrustedUntil` all default to values that leave every existing account and session completely unaffected - MFA/passkeys/policies are entirely opt-in (or admin-opted-in) on top of the login flow that has worked since Phase 1.
+
+---
+
+## 🛰️ Phase 9.5: Enterprise Authentication & Adaptive Access
+
+Phase 9 built the IAM foundation; Phase 9.5 sharpens the risk engine it introduced and closes the gaps between what that phase's spec asked for and what shipped - a fourth (CRITICAL) risk tier, VPN/Tor/impossible-travel detection, an actually-enforced device-restriction and session-timeout policy, a dedicated devices dashboard, and analytics. **Nothing from Phase 9 was rewritten** - every change here extends the same `scoreLogin()`/`policyEngine.js`/SOAR trigger machinery already in place.
+
+**Four-tier risk engine** (`backend/services/iam/loginRiskEngine.js`): `scoreLogin()` now weighs six signals (new device, IOC-matched IP, country change, VPN, Tor, impossible travel) into `Low`/`Medium`/`High`/`Critical`. `detectImpossibleTravel()` is a separate pure function - a country change within 120 minutes of the account's previous login is flagged (country-level only; this codebase has no lat/long geo-database, so it's a documented simplification, not a geodesic speed calculation).
+
+**VPN/Tor detection** (`backend/services/iam/networkIntel.js`): local-only and honestly scoped - no external IP-intelligence API is called during login (the same "no network calls on the login hot path" rule Phase 9 already established for IOC lookups). Detection checks the Phase 7 `IOC` collection for `vpn`/`tor` tags plus a small, explicitly non-exhaustive static list of Tor directory authorities for out-of-the-box demonstrability. Real coverage requires importing a maintained exit-node list into the IOC collection - documented in the module itself as a deployment-time integration, not a built-in guarantee.
+
+**Threat Intelligence-based IP reputation check before login**: reuses the exact same local `IOC` lookup Phase 9 introduced (`ipIocMatch`) - this *is* the "check IP reputation before login" requirement, deliberately kept local-only rather than calling Phase 7's external providers (VirusTotal/AbuseIPDB/etc.) synchronously during login, to avoid making every login's latency and availability depend on a third-party service.
+
+**Device restrictions now actually enforced**: Phase 9 defined `SecurityPolicy.blockUntrustedDevices` but nothing checked it. `services/iam/policyEngine.js`'s new `evaluateDevicePolicy()` does now, as a hard block (unlike password expiry/MFA-enrollment) - the recovery is simply "log in from a known device," always possible for the genuine owner. A new `allowedDeviceIds` allow-list layers on top.
+
+**Password policy, enforced at registration**: `evaluatePasswordPolicy()` checks a configurable minimum length and, optionally, upper/lower/digit/symbol complexity - applied to new accounts only, since this app has no forced-password-reset flow to retroactively apply a stricter policy to existing ones.
+
+**Session timeout, now actually enforced**: Phase 9 defined `sessionTimeoutMinutes` but nothing checked it either. `backend/middleware/auth.middleware.js` now calls `evaluateSessionTimeout()` on every authenticated request (alongside, not replacing, the existing revoked-session check), backed by a short in-memory TTL cache on `SecurityPolicy.getPolicy()` so this adds no meaningful per-request DB load.
+
+**Trusted Devices dashboard**: `/identity/devices` (`frontend/app/identity/devices/page.tsx`) - a dedicated, fuller device management view (first-seen/last-seen/last-IP/MFA-trust-expiry per device) alongside the existing summary table on `/identity` itself.
+
+**SIEM/SOAR**: a new `impossible_travel` event (severity `CRITICAL`) and the `login` event's `siemType` relabeled `LOGIN_SUCCESS` (the "LOGIN" value is kept in the schema enum only so historical documents remain valid). Two new SOAR triggers - `IMPOSSIBLE_TRAVEL` (unconditional) and `CRITICAL_RISK_LOGIN` (conditional on `step_up_auth`'s `riskLevel` metadata, the same metadata-conditional pattern Phase 8 already used for `MITRE_CRITICAL`) - fire a newly seeded "Critical Risk Response" playbook: `requireMfaStepUp` → `raiseIncident` → `notifyUser`, exactly the spec's "Force MFA → Raise Incident → Notify User" flow.
+
+**Analytics**: `GET /api/iam/stats` powers six new charts on `/identity` - Risk Levels, MFA Usage, Countries, Devices, and a Failed Logins timeline - computed from the `login`/`login_failed` SIEM events every login already produces (the `login` event now carries `riskLevel`/`riskScore`/`authMethod` in its metadata specifically to make this possible).
+
+**Backward compatibility**: every new field (`SecurityPolicy.allowedDeviceIds/minPasswordLength/requirePasswordComplexity`) defaults to unrestricted/permissive values, the `LOGIN` siemType stays valid for old documents, and the new hard blocks (device restriction, session timeout) are opt-in via policy - an unconfigured installation behaves exactly as it did after Phase 9.
 
 ---
 
@@ -1072,6 +1122,40 @@ docker-compose down
 | `GET` | `/executions/:id` | A single execution's full detail | Yes |
 | `GET` | `/stats` | Success rate, response time, top rules/playbooks, action distribution | Yes |
 | `GET` | `/export` | CSV/JSON export of execution history | Yes |
+
+### MFA Routes (`/api/mfa`, Phase 9)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `POST` | `/setup` | Generate a pending TOTP secret + QR code - see [Phase 9](#-phase-9-identity--access-management-iam--multi-factor-authentication) | Yes |
+| `POST` | `/verify` | Confirm enrollment with a real code; activates MFA and issues recovery codes | Yes |
+| `POST` | `/disable` | Disable MFA (requires current password) | Yes |
+| `POST` | `/recovery/regenerate` | Invalidate and reissue recovery codes | Yes |
+| `GET` | `/status` | `{enabled, recoveryCodesRemaining}` | Yes |
+| `POST` | `/verify-login` | Second step of an MFA-gated login - exchanges the short-lived `mfaToken` + code for a session | No (pre-session) |
+
+### Passkey Routes (`/api/passkeys` + `/api/auth/passkey`, Phase 9)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `POST` | `/api/passkeys/register/options` | WebAuthn registration options | Yes |
+| `POST` | `/api/passkeys/register/verify` | Verify and store a new passkey | Yes |
+| `GET` | `/api/passkeys` | List your passkeys | Yes |
+| `DELETE` | `/api/passkeys/:id` | Remove a passkey | Yes |
+| `POST` | `/api/auth/passkey/options` | WebAuthn authentication options for an email | No |
+| `POST` | `/api/auth/passkey/verify` | Verify a passkey assertion and issue a session | No |
+
+### IAM Routes (`/api/iam`, Phase 9)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---|
+| `GET` | `/policy` | Read the current SecurityPolicy | Yes |
+| `PUT` | `/policy` | Update the SecurityPolicy | Admin |
+| `GET` | `/roles` | The list of valid roles | Admin |
+| `GET` | `/users` | List users with their role | Admin |
+| `PATCH` | `/users/:id/role` | Change a user's role | Org Owner |
+| `GET` | `/login-history` | Your own login/MFA/passkey/policy event history | Yes |
+| `GET` | `/stats` | Analytics for `/identity` - risk levels, MFA usage, countries, devices, failed logins - see [Phase 9.5](#-phase-95-enterprise-authentication--adaptive-access) | Yes |
 
 **Upload Request:**
 ```json
