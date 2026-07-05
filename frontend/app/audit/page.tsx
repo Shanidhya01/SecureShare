@@ -3,40 +3,18 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { ScrollText, AlertCircle } from "lucide-react";
+import { ScrollText, AlertCircle, ShieldOff, Laptop2, CalendarClock } from "lucide-react";
 import { apiErrorStatus } from "@/lib/errors";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import Pagination from "@/components/design/Pagination";
 import FilterBar from "@/components/design/FilterBar";
-import StatusBadge, { type StatusTone } from "@/components/design/StatusBadge";
-import { TableSkeleton } from "@/components/design/Skeletons";
-
-type SecurityEventEntry = {
-  id: string;
-  type: "new_device" | "device_removed" | "session_revoked" | "download_denied";
-  message: string;
-  filename?: string | null;
-  deviceId?: string | null;
-  ip?: string | null;
-  country?: string | null;
-  createdAt: string;
-};
-
-const typeLabel: Record<SecurityEventEntry["type"], string> = {
-  new_device: "New Device",
-  device_removed: "Device Removed",
-  session_revoked: "Session Revoked",
-  download_denied: "Download Denied",
-};
-
-const typeTone: Record<SecurityEventEntry["type"], StatusTone> = {
-  new_device: "info",
-  device_removed: "warning",
-  session_revoked: "warning",
-  download_denied: "danger",
-};
+import StatusBadge from "@/components/design/StatusBadge";
+import StatCard from "@/components/design/StatCard";
+import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import { ChartCard, EventTrendChart } from "@/components/soc/charts";
+import { securityEventTypeLabel as typeLabel, securityEventTypeTone as typeTone, type SecurityEventEntry } from "@/lib/securityEvents";
 
 const PAGE_SIZE = 15;
 
@@ -104,6 +82,17 @@ export default function AuditLogsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const stats = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayCount = events.filter((e) => new Date(e.createdAt).getTime() >= startOfToday.getTime()).length;
+    const deniedCount = events.filter((e) => e.type === "download_denied").length;
+    const deviceChangeCount = events.filter((e) => e.type === "new_device" || e.type === "device_removed").length;
+    return { total: events.length, todayCount, deniedCount, deviceChangeCount };
+  }, [events]);
+
+  const trendTimeline = useMemo(() => events.map((e) => ({ createdAt: e.createdAt, severity: "INFO" })), [events]);
+
   const columns: DataTableColumn<SecurityEventEntry>[] = [
     {
       key: "type",
@@ -158,6 +147,27 @@ export default function AuditLogsPage() {
         <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2">
           <AlertCircle className="text-destructive" size={18} />
           <p className="text-destructive text-sm">{error}</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="mb-6">
+          <StatsSkeleton count={4} />
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+          <StatCard label="Total Events" value={stats.total} icon={ScrollText} variant="primary" />
+          <StatCard label="Today" value={stats.todayCount} icon={CalendarClock} variant="success" />
+          <StatCard label="Device Changes" value={stats.deviceChangeCount} icon={Laptop2} variant="warning" />
+          <StatCard label="Download Denials" value={stats.deniedCount} icon={ShieldOff} variant="danger" />
+        </div>
+      )}
+
+      {!loading && events.length > 0 && (
+        <div className="mb-6">
+          <ChartCard title="Event Volume (Last 30 Days)">
+            <EventTrendChart timeline={trendTimeline} />
+          </ChartCard>
         </div>
       )}
 

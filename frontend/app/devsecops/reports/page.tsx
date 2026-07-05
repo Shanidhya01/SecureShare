@@ -39,18 +39,23 @@ function ReportCard({ reportKey, label, onExport }: { reportKey: string; label: 
 
 export default function DevSecOpsReportsPage() {
   const router = useRouter();
-  const [ready] = useState(() => typeof window !== "undefined" && !!localStorage.getItem("token") && getIsAdminFromToken(localStorage.getItem("token") as string));
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for DevSecOps");
-      router.push("/dashboard");
-    }
+    const checkAccess = () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        router.push("/login");
+        return;
+      }
+      if (!getIsAdminFromToken(token)) {
+        toast.error("Admin access required for DevSecOps");
+        router.push("/dashboard");
+        return;
+      }
+      setReady(true);
+    };
+    checkAccess();
   }, [router]);
 
   const handleExport = async (reportType: string, format: "csv" | "json" | "pdf") => {

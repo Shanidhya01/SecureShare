@@ -310,10 +310,10 @@ export default function SoarPage() {
       render: (r) =>
         isAdmin ? (
           <div className="flex items-center gap-2">
-            <button onClick={() => toggleRule(r)} title="Enable/disable" className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
+            <button onClick={() => toggleRule(r)} title="Enable/disable" aria-label={`${r.enabled ? "Disable" : "Enable"} rule ${r.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
               <Power size={14} />
             </button>
-            <button onClick={() => deleteRule(r._id)} title="Delete" className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+            <button onClick={() => deleteRule(r._id)} title="Delete" aria-label={`Delete rule ${r.name}`} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
               <Trash2 size={14} />
             </button>
           </div>
@@ -333,15 +333,15 @@ export default function SoarPage() {
       header: "Actions",
       render: (p) => (
         <div className="flex items-center gap-2">
-          <button onClick={() => exportPlaybook(p)} title="Export" className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
+          <button onClick={() => exportPlaybook(p)} title="Export" aria-label={`Export playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
             <Download size={14} />
           </button>
           {isAdmin && (
             <>
-              <button onClick={() => clonePlaybook(p._id)} title="Clone" className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
+              <button onClick={() => clonePlaybook(p._id)} title="Clone" aria-label={`Clone playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
                 <Copy size={14} />
               </button>
-              <button onClick={() => deletePlaybook(p._id)} title="Delete" className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+              <button onClick={() => deletePlaybook(p._id)} title="Delete" aria-label={`Delete playbook ${p.name}`} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
                 <Trash2 size={14} />
               </button>
             </>

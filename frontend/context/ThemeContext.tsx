@@ -21,12 +21,23 @@ function applyThemeClass(theme: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "dark";
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
-    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  });
+  // Starts at a fixed default so the server render and the client's first hydration pass agree;
+  // the real (possibly different) theme is read and applied client-side right after mount.
+  const [theme, setThemeState] = useState<Theme>("dark");
+
+  useEffect(() => {
+    const syncTheme = () => {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+      const resolved: Theme =
+        stored === "light" || stored === "dark"
+          ? stored
+          : window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+      setThemeState(resolved);
+    };
+    syncTheme();
+  }, []);
 
   useEffect(() => {
     applyThemeClass(theme);

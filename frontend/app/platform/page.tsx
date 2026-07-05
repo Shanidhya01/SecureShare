@@ -26,6 +26,7 @@ import PageHeader from "@/components/design/PageHeader";
 import StatCard from "@/components/design/StatCard";
 import StatusBadge, { type StatusTone } from "@/components/design/StatusBadge";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
+import EmptyState from "@/components/design/EmptyState";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
 import { apiErrorStatus } from "@/lib/errors";
 import { staggerContainer } from "@/lib/motion";
@@ -417,7 +418,15 @@ export default function PlatformPage() {
             <DataTable columns={jobColumns} rows={dashboard.recentJobs} rowKey={(j) => j._id} emptyLabel="No background jobs recorded yet." />
           </div>
         </div>
-      ) : null}
+      ) : (
+        <EmptyState
+          icon={Server}
+          title="No platform data available"
+          description="Run a health scan to populate infrastructure status, metrics, and alerts."
+          actionLabel="Run Health Scan"
+          onAction={runScan}
+        />
+      )}
     </div>
   );
 }

@@ -36,14 +36,14 @@ type PrefKey = "emailAlerts" | "downloadAlerts" | "compactTables";
 
 const PREFS_STORAGE_KEY = "secureshare:preferences";
 
+const DEFAULT_PREFS: Record<PrefKey, boolean> = { emailAlerts: true, downloadAlerts: true, compactTables: false };
+
 function loadPrefs(): Record<PrefKey, boolean> {
-  const defaults: Record<PrefKey, boolean> = { emailAlerts: true, downloadAlerts: true, compactTables: false };
-  if (typeof window === "undefined") return defaults;
   try {
     const raw = localStorage.getItem(PREFS_STORAGE_KEY);
-    return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
+    return raw ? { ...DEFAULT_PREFS, ...JSON.parse(raw) } : DEFAULT_PREFS;
   } catch {
-    return defaults;
+    return DEFAULT_PREFS;
   }
 }
 
@@ -53,12 +53,14 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const [user, setUser] = useState<{ email?: string; name?: string } | null>(null);
   const [fingerprint, setFingerprint] = useState<string>("");
-  const [prefs, setPrefs] = useState<Record<PrefKey, boolean>>(loadPrefs());
+  const [prefs, setPrefs] = useState<Record<PrefKey, boolean>>(DEFAULT_PREFS);
   const [revoking, setRevoking] = useState(false);
   const [clearingKeys, setClearingKeys] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
+    setPrefs(loadPrefs());
+
     const raw = localStorage.getItem("user");
     setUser(raw ? JSON.parse(raw) : null);
 
@@ -164,7 +166,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-4xl lg:max-w-5xl">
       <PageHeader icon={SettingsIcon} title="Settings" description="Manage your profile, security, and preferences." />
 
       <Tabs defaultValue="profile">
@@ -179,13 +181,15 @@ export default function SettingsPage() {
 
         <TabsContent value="profile">
           <div className="rounded-xl border border-border bg-card p-6 space-y-5">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Name</p>
-              <p className="text-foreground font-medium">{user?.name || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Email</p>
-              <p className="text-foreground font-medium">{user?.email || "-"}</p>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Name</p>
+                <p className="text-foreground font-medium">{user?.name || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Email</p>
+                <p className="text-foreground font-medium">{user?.email || "-"}</p>
+              </div>
             </div>
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1.5">
@@ -200,7 +204,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="security">
-          <div className="space-y-6">
+          <div className="grid gap-6 sm:grid-cols-2">
             <div className="rounded-xl border border-border bg-card p-6">
               <p className="text-sm text-muted-foreground mb-4">
                 Manage trusted devices, active sessions, and blocked access attempts from the Security Center.
@@ -215,7 +219,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="rounded-xl border border-border bg-card p-6">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex h-full flex-col items-start justify-between gap-4">
                 <div>
                   <p className="text-foreground font-semibold text-sm flex items-center gap-2">
                     <Lock size={14} className="text-muted-foreground" /> Change password
@@ -414,7 +418,7 @@ function PrefRow({
         <p className="text-foreground font-medium text-sm">{label}</p>
         <p className="text-muted-foreground text-xs mt-0.5 max-w-md">{description}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
     </div>
   );
 }

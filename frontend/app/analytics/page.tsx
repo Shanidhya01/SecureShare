@@ -19,6 +19,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import PageHeader from "@/components/design/PageHeader";
+import EmptyState from "@/components/design/EmptyState";
 import { StatsSkeleton } from "@/components/design/Skeletons";
 import { apiErrorStatus } from "@/lib/errors";
 import { bucketByDay } from "@/lib/chartHelpers";
@@ -111,6 +112,8 @@ export default function AnalyticsPage() {
         .map(([name, value]) => ({ name, value }))
     : [];
 
+  const hasAnyData = files.length > 0 || threatScans.length > 0 || dlpScans.length > 0 || sessions.length > 0;
+
   return (
     <div>
       <PageHeader
@@ -136,6 +139,14 @@ export default function AnalyticsPage() {
 
       {loading ? (
         <StatsSkeleton count={6} />
+      ) : !hasAnyData ? (
+        <EmptyState
+          icon={BarChart3}
+          title="No activity yet"
+          description="Upload a file or run a scan to start seeing trends across uploads, downloads, threats, DLP findings, and sessions."
+          actionLabel="Upload a File"
+          actionHref="/upload"
+        />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <ChartCard title="Uploads (14 days)">

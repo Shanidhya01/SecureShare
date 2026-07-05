@@ -13,6 +13,7 @@ import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import SecurityScoreGauge from "@/components/design/SecurityScoreGauge";
+import StatCard from "@/components/design/StatCard";
 import StatusBadge from "@/components/design/StatusBadge";
 import EventTimeline, { type EventTimelineItem } from "@/components/design/EventTimeline";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
@@ -271,11 +272,18 @@ export default function SecurityCenterPage() {
 
       {loading ? (
         <div className="space-y-8">
-          <StatsSkeleton count={1} />
+          <StatsSkeleton count={4} />
           <TableSkeleton />
         </div>
       ) : (
         <div className="space-y-10">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <StatCard label="Trusted Devices" value={trustedDevices} icon={Laptop} variant="primary" />
+            <StatCard label="Active Sessions" value={sessions.length} icon={Monitor} variant="success" />
+            <StatCard label="Blocked Attempts" value={blockedAttempts.length} icon={Ban} variant="danger" />
+            <StatCard label="Malware Detections" value={threatStats?.malwareDetections ?? 0} icon={AlertCircle} variant="warning" />
+          </div>
+
           <div className="rounded-xl border border-border bg-card p-6 flex flex-col sm:flex-row items-center gap-8">
             <SecurityScoreGauge score={securityScore} />
             <div>

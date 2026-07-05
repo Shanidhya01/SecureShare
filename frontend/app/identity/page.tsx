@@ -30,6 +30,7 @@ import StatusBadge from "@/components/design/StatusBadge";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import EventTimeline, { type EventTimelineItem } from "@/components/design/EventTimeline";
+import StatCard from "@/components/design/StatCard";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/errors";
 
@@ -339,6 +340,13 @@ export default function IdentityPage() {
         </div>
       ) : (
       <div className="space-y-8">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <StatCard label="MFA Status" value={mfaEnabled ? "Enabled" : "Disabled"} icon={ShieldCheck} variant={mfaEnabled ? "success" : "muted"} />
+          <StatCard label="Passkeys" value={passkeys.length} icon={KeyRound} variant="primary" />
+          <StatCard label="Trusted Devices" value={devices.filter((d) => d.trusted).length} icon={Smartphone} variant="primary" />
+          <StatCard label="Failed Logins" value={stats?.failedLoginsTotal ?? 0} icon={AlertCircle} variant="danger" />
+        </div>
+
         {/* MFA */}
         <section className="rounded-xl border border-border bg-card p-6">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">

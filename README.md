@@ -5,12 +5,16 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
-[![Security Phases](https://img.shields.io/badge/Security-5%20Phases%20Complete-success)](#-security-architecture-roadmap)
+[![Security Phases](https://img.shields.io/badge/Security-13%20Phases%20Complete-success)](#-security-architecture-roadmap)
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](#-key-features)
+[![CI](https://img.shields.io/badge/CI-configure%20GitHub%20Actions-lightgrey)](#-ci--build-status)
+[![Build](https://img.shields.io/badge/Build-passing%20locally-blue)](#-ci--build-status)
 
-A production-ready, full-stack secure file sharing application that prioritizes **privacy, security, and simplicity**. Upload files with true end-to-end encryption, digital signatures, Zero Trust access control, and automated malware scanning — all with an intuitive UI and comprehensive audit logs.
+A production-ready, full-stack **enterprise cybersecurity platform** that prioritizes **privacy, security, and simplicity**. Upload files with true end-to-end encryption, digital signatures, Zero Trust access control, and automated malware scanning — backed by a full SIEM/SOAR, threat intelligence, IAM, compliance, CSPM, and DevSecOps stack, all with an intuitive UI and comprehensive audit logs.
 
-**Documentation:** [Architecture](#-system-architecture) · [Security Model](SECURITY.md) · [Deployment Guide](DEPLOYMENT.md) · [Environment Variables](ENVIRONMENT_VARIABLES.md) · [Security Testing](SECURITY_TESTING.md) · [Changelog](CHANGELOG.md)
+**🔗 Live Demo:** _add your deployed URL here, e.g. `https://secureshare.vercel.app`_ · **📦 Demo Video:** _add a Loom/YouTube link here_
+
+**Documentation:** [Architecture](#-system-architecture) · [Security Model](SECURITY.md) · [Deployment Guide](DEPLOYMENT.md) · [Environment Variables](ENVIRONMENT_VARIABLES.md) · [Security Testing](SECURITY_TESTING.md) · [Monitoring](MONITORING.md) · [Changelog](CHANGELOG.md) · [API Reference](API.md) · [UI Guide](UI_GUIDE.md) · [Design System](DESIGN_SYSTEM.md) · [Component Library](COMPONENT_LIBRARY.md) · [Accessibility](ACCESSIBILITY.md) · [Responsive Guide](RESPONSIVE_GUIDE.md) · [Performance](PERFORMANCE.md) · [Testing](TESTING.md)
 
 ## 🎯 Overview
 
@@ -1468,6 +1472,35 @@ docker run -p 3000:3000 secureshare-frontend
 
 ---
 
+## ☁️ Cloud Deployment
+
+SecureShare's actual deployment target is fully managed/serverless — no VPS or self-hosted infrastructure to patch. Full step-by-step instructions live in [DEPLOYMENT.md](DEPLOYMENT.md); this is the short version.
+
+| Component | Provider | Notes |
+|---|---|---|
+| **Frontend** | [Vercel](https://vercel.com) | Next.js 16 App Router, zero-config deploy from this repo's `frontend/` directory. Set `NEXT_PUBLIC_API` to your deployed backend URL. |
+| **Backend API** | [Render](https://render.com) | Node/Express web service (native buildpack or the included `Dockerfile`). Set all backend env vars from [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md). |
+| **Database** | [MongoDB Atlas](https://www.mongodb.com/atlas) | Managed cluster; whitelist Render's outbound IPs or use Atlas's "allow from anywhere" for PaaS hosts without static IPs. |
+| **Cache / Queue** | [Redis Cloud](https://redis.io/cloud/) | Backs Phase 13's BullMQ job queues and rate-limit/cache layers. Optional — the app falls back to in-process job execution if unset. |
+| **Object Storage** | [Cloudinary](https://cloudinary.com) | Stores encrypted file blobs (ciphertext only — see the Zero-Knowledge Encryption Architecture above). |
+| **Malware Scanning** | ClamAV on Render (Docker) | Deploy `clamd` as its own small Docker service on Render; point the backend at it via `CLAMAV_HOST`/`CLAMAV_PORT`. |
+
+See [MONITORING.md](MONITORING.md) for the health/metrics/alerting reference once deployed (Phase 13's Platform Operations dashboard at `/platform`).
+
+---
+
+## ⚡ Performance
+
+See [PERFORMANCE.md](PERFORMANCE.md) for the full reference. Summary of what's already in place:
+
+- **Automatic per-route code splitting** — Next.js App Router ships a separate JS chunk per route by default; no manual `dynamic()` splitting was needed for the current page count/sizes.
+- **Small, paginated data fetches** — every `DataTable`-backed page (Audit, Compliance, Cloud Security, DevSecOps, SOAR, Identity, Threat Intel, ...) paginates server-side responses through a shared `Pagination` component rather than rendering unbounded lists, so no list-virtualization library is currently required.
+- **`prefers-reduced-motion` support** — the whole app is wrapped in framer-motion's `MotionConfig reducedMotion="user"` (`frontend/app/layout.tsx`), so every animation automatically respects the OS-level accessibility setting with no per-component changes.
+- **Shared design-system components** (`frontend/components/design/*`) avoid re-implementing cards/tables/skeletons per page, keeping bundle growth roughly linear with actual new functionality rather than duplicated UI code.
+- **Cloudinary CDN** serves encrypted blobs close to the requester; **Redis Cloud** caching backs the Phase 13 platform metrics/queue layer.
+
+---
+
 ## 📊 Database Schema
 
 ### User Collection
@@ -1768,6 +1801,30 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) file for 
 
 ---
 
+## 👤 Author
+
+Maintained by [@Shanidhya01](https://github.com/Shanidhya01). Contributions, issues, and forks are welcome — see [Contributing](#-contributing) above.
+
+---
+
+## 🙏 Acknowledgements
+
+- [Next.js](https://nextjs.org), [Express](https://expressjs.com), and [MongoDB](https://www.mongodb.com/) for the core stack
+- [shadcn/ui](https://ui.shadcn.com) and [Radix](https://www.radix-ui.com) for accessible UI primitives
+- [Recharts](https://recharts.org) for the charting layer and [Lucide](https://lucide.dev) for icons
+- [ClamAV](https://www.clamav.net) and [VirusTotal](https://www.virustotal.com) for malware detection
+- The MITRE ATT&CK framework, referenced by the Threat Intelligence (Phase 7) module's technique mapping
+
+---
+
+## 🧪 CI & Build Status
+
+- **Backend tests**: `cd backend && npm test` — Node's built-in test runner, 195+ tests across DLP, correlation engine, threat intel, SOAR, IAM, cloud, DevSecOps, compliance, and platform modules. All passing as of this writing.
+- **Frontend**: `cd frontend && npm run lint && npm run build` — ESLint and a full Next.js production build (TypeScript strict-checked, all routes statically prerendered where possible).
+- **Continuous Integration**: not yet wired to a hosted CI provider in this repo — add a `.github/workflows/ci.yml` running the two commands above on every PR to turn the CI badge at the top of this file from a placeholder into a live status check.
+
+---
+
 ## 🐛 Troubleshooting
 
 ### Common Issues
@@ -1844,7 +1901,7 @@ For issues, questions, or suggestions:
 
 ---
 
-## 🚀 Future Enhancements
+## 🚀 Roadmap & Future Enhancements
 
 Planned features and improvements:
 - [ ] Drag-and-drop file upload
@@ -1882,5 +1939,5 @@ Planned features and improvements:
 ---
 
 **Last Updated**: July 2026
-**Version**: 13.0.0 (Phase 13 — Production Hardening, Platform Operations & Reliability)
+**Version**: 13.1.0 (Phase 13 — Production Hardening, Platform Operations & Reliability, plus a frontend enterprise-UI polish pass: Notification Center, Quick Search, design tokens, reduced-motion support, and this documentation set)
 **Status**: Production Ready ✅

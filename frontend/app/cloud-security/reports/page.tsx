@@ -11,18 +11,23 @@ import PageHeader from "@/components/design/PageHeader";
 
 export default function CloudReportsPage() {
   const router = useRouter();
-  const [ready] = useState(() => typeof window !== "undefined" && !!localStorage.getItem("token") && getIsAdminFromToken(localStorage.getItem("token") as string));
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
-    }
+    const checkAccess = () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        router.push("/login");
+        return;
+      }
+      if (!getIsAdminFromToken(token)) {
+        toast.error("Admin access required for Cloud Security");
+        router.push("/dashboard");
+        return;
+      }
+      setReady(true);
+    };
+    checkAccess();
   }, [router]);
 
   const handleExport = async (format: "csv" | "json" | "pdf") => {

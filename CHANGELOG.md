@@ -6,6 +6,32 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 14 — Frontend Production QA
+**2026-07-05**
+
+A pre-deployment audit of the frontend covering hydration safety and accessibility. `npm run build`, `npm run lint`, and `tsc --noEmit` were already clean going in (no prerender errors); this pass targeted defects that don't surface as build errors - SSR/client hydration mismatches and screen-reader gaps - by reading every page that touches `window`/`localStorage`/`document` and every custom (non-primitive) interactive component.
+
+### Fixed
+- **Hydration mismatches** from reading `localStorage`/`window` synchronously during render or via a `useState` lazy initializer (which runs again on the client's first hydration pass, before it can match the server's output):
+  - `components/shell/Topbar.tsx` - the signed-in user's name/email in the account menu rendered "Account"/"Signed in" from the server and the real value on hydration, on every page, for every logged-in user. Now defaults to `null` and is populated in a `useEffect`.
+  - `context/ThemeContext.tsx` - the theme toggle icon (`Sun`/`Moon`) in `Topbar` could flip between server and client render depending on the visitor's stored/OS theme. Now starts at a fixed `"dark"` default (matching the server) and resolves the real theme client-side after mount; the existing inline no-flash `<script>` in `layout.tsx` still prevents a visible flash of the wrong theme on the page background.
+  - `app/cloud-security/reports/page.tsx`, `app/devsecops/reports/page.tsx` - an admin-only page gate (`if (!ready) return null`) computed synchronously from `localStorage` in a lazy initializer, so the page could render fully on the client before hydration reconciled with the server's `null`. Now gates on a `useState(false)` set inside the existing access-check effect.
+  - `app/settings/page.tsx` - notification/table-density toggles read persisted preferences synchronously, which could mismatch the `checked` state of the rendered switches. Now initializes to fixed defaults and loads the persisted values in an effect.
+  - `components/design/NotificationCenter.tsx` - the unread-count badge's read/archived state had the same synchronous-read pattern (currently latent, since the events list itself loads asynchronously and is empty on first render either way, but fixed for correctness).
+- **Accessibility** gaps in hand-rolled (non-design-system) components - the shared `Dialog`/`Button`/`Switch` primitives already handle focus trapping, `Escape`, ARIA roles, and focus-visible rings correctly:
+  - `components/UnlockKeyModal.tsx` was a fully hand-rolled overlay with no focus trap, no `Escape` handling, no `role`/`aria-modal`, an unlabeled icon-only close button, and hardcoded dark-only colors (`bg-slate-800`, `text-white`, ...) that ignored the light/dark theme. Rebuilt on the existing `Dialog` primitive (same open/onClose/onSuccess API), which supplies focus trapping, `Escape`-to-close, ARIA wiring, and a labeled close button for free, and switched to theme tokens (`bg-card`, `border-border`, `text-foreground`, ...).
+  - Icon-only action buttons that carried only a `title` attribute (not read by most screen readers, and stripped on touch devices) now also carry `aria-label`: rule enable/disable and delete in `app/soar/page.tsx`, playbook export/clone/delete in the same file, run/pause/resume in `app/platform/scheduler/page.tsx`, and the copy-share-link button in `app/upload/page.tsx`.
+  - The notification/preference `Switch` toggles in `app/settings/page.tsx` were visually adjacent to their label text but had no programmatic association (`aria-label`/`aria-labelledby`), so a screen reader announced only "switch, on/off" with no name. Each now carries `aria-label={label}`.
+
+### Verified, no changes needed
+- Route builds (`/files`, `/identity/devices`, and all 34 routes) were already clean under `next build` - no prerender errors found.
+- `DataTable` renders semantic `<table>`/`<th>` markup, wraps in `overflow-x-auto` for narrow viewports, and its sort buttons pair an icon with visible header text (not icon-only).
+- All Recharts usage (11 pages) is already wrapped in `ResponsiveContainer`.
+- No hardcoded dark-only Tailwind colors remain outside the fixed modal; the rest of the app already uses semantic theme tokens exclusively.
+- No unused dependencies in `package.json`; `shadcn` and `tw-animate-css` are consumed via CSS imports rather than JS imports, which a naive import-grep misses.
+
+---
+
 ## Phase 13 — Production Hardening & Cloud Platform Operations
 **2026-07-05**
 

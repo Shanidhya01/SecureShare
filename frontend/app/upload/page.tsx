@@ -576,7 +576,7 @@ export default function UploadFile() {
                   <code className="flex-1 min-w-0 text-xs text-foreground bg-background/60 rounded-lg px-3 py-2 break-all">
                     {shareLink}
                   </code>
-                  <button type="button" onClick={handleCopyShareLink} className="shrink-0 p-2 bg-success hover:bg-success/90 text-white rounded-lg" title="Copy link">
+                  <button type="button" onClick={handleCopyShareLink} className="shrink-0 p-2 bg-success hover:bg-success/90 text-white rounded-lg" title="Copy link" aria-label={linkCopied ? "Link copied" : "Copy share link"}>
                     {linkCopied ? <Check size={16} /> : <Copy size={16} />}
                   </button>
                 </div>

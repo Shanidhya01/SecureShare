@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Cloud, Files, Fingerprint, ClipboardCheck, ScanSearch, Radar, type LucideIcon } from "lucide-react";
+import { Cloud, Files, Fingerprint, ClipboardCheck, ScanSearch, Radar, Clock, type LucideIcon } from "lucide-react";
 import api from "@/lib/api";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import SearchInput from "@/components/design/SearchInput";
 import { Spinner } from "@/components/design/Loader";
+import { cn } from "@/lib/utils";
 
 type ResultItem = {
   id: string;
@@ -112,6 +113,29 @@ const CATEGORIES: Category[] = [
 ];
 
 const RESULTS_PER_CATEGORY = 5;
+const RECENT_KEY = "secureshare:quicksearch:recent";
+const MAX_RECENT = 5;
+
+function loadRecent(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(terms: string[]) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(terms));
+  } catch {}
+}
+
+type FlatEntry =
+  | { kind: "recent"; term: string }
+  | { kind: "result"; item: ResultItem; icon: LucideIcon };
 
 /** Global Ctrl/Cmd+K command palette. Searches across the domains already exposed by existing
  *  list endpoints (files, threats, incidents, users, compliance evidence, cloud assets) - fetched
@@ -122,6 +146,9 @@ export default function QuickSearch() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [resultsByCategory, setResultsByCategory] = useState<Record<string, ResultItem[]>>({});
+  const [recent, setRecent] = useState<string[]>([]);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const loadAll = useCallback(async () => {
     const token = localStorage.getItem("token");
@@ -162,6 +189,7 @@ export default function QuickSearch() {
   useEffect(() => {
     if (open) {
       setQuery("");
+      setRecent(loadRecent());
       loadAll();
     }
   }, [open, loadAll]);
@@ -175,27 +203,94 @@ export default function QuickSearch() {
     })).filter((group) => group.items.length > 0);
   }, [query, resultsByCategory]);
 
+  const flatList: FlatEntry[] = useMemo(() => {
+    if (!query.trim()) return recent.map((term) => ({ kind: "recent", term }) as const);
+    return grouped.flatMap(({ category, items }) => items.map((item) => ({ kind: "result", item, icon: category.icon }) as const));
+  }, [query, recent, grouped]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [flatList.length, query]);
+
+  const rememberSearch = (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    const next = [trimmed, ...recent.filter((t) => t.toLowerCase() !== trimmed.toLowerCase())].slice(0, MAX_RECENT);
+    setRecent(next);
+    saveRecent(next);
+  };
+
   const goTo = (href: string) => {
+    rememberSearch(query);
     setOpen(false);
     router.push(href);
   };
+
+  const selectEntry = (entry: FlatEntry) => {
+    if (entry.kind === "recent") {
+      setQuery(entry.term);
+    } else {
+      goTo(entry.item.href);
+    }
+  };
+
+  const onListKeyDown = (e: ReactKeyboardEvent) => {
+    if (flatList.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((i) => Math.min(i + 1, flatList.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectEntry(flatList[highlightedIndex]);
+    }
+  };
+
+  let flatIndex = -1;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="top-[20%] max-w-lg translate-y-0 p-0 sm:max-w-lg" showCloseButton={false}>
         <DialogTitle className="sr-only">Quick search</DialogTitle>
-        <div className="p-3">
+        <div className="p-3" onKeyDown={onListKeyDown}>
           <SearchInput value={query} onChange={setQuery} placeholder="Search files, threats, incidents, users…" autoFocus />
         </div>
-        <div className="max-h-[60vh] overflow-y-auto border-t border-border">
+        <div ref={listRef} className="max-h-[60vh] overflow-y-auto border-t border-border" onKeyDown={onListKeyDown}>
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
               <Spinner size={14} /> Loading…
             </div>
           ) : !query.trim() ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              Start typing to search across files, threats, incidents, users, compliance, and cloud assets.
-            </p>
+            recent.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Start typing to search across files, threats, incidents, users, compliance, and cloud assets.
+              </p>
+            ) : (
+              <div className="py-2">
+                <p className="px-4 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent searches</p>
+                {recent.map((term) => {
+                  flatIndex += 1;
+                  const idx = flatIndex;
+                  return (
+                    <button
+                      key={term}
+                      type="button"
+                      onClick={() => selectEntry({ kind: "recent", term })}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      className={cn(
+                        "flex w-full items-center gap-3 px-4 py-2 text-left text-sm",
+                        idx === highlightedIndex ? "bg-white/5 text-foreground" : "hover:bg-white/5"
+                      )}
+                    >
+                      <Clock size={15} className="shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-foreground">{term}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )
           ) : grouped.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">No results for &ldquo;{query}&rdquo;.</p>
           ) : (
@@ -204,20 +299,28 @@ export default function QuickSearch() {
                 <p className="px-4 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {category.label}
                 </p>
-                {items.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => goTo(item.href)}
-                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-white/5"
-                  >
-                    <category.icon size={15} className="shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-foreground">{item.title}</span>
-                      {item.subtitle && <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>}
-                    </span>
-                  </button>
-                ))}
+                {items.map((item) => {
+                  flatIndex += 1;
+                  const idx = flatIndex;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => goTo(item.href)}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      className={cn(
+                        "flex w-full items-center gap-3 px-4 py-2 text-left text-sm",
+                        idx === highlightedIndex ? "bg-white/5 text-foreground" : "hover:bg-white/5"
+                      )}
+                    >
+                      <category.icon size={15} className="shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-foreground">{item.title}</span>
+                        {item.subtitle && <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             ))
           )}

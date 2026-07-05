@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { MotionConfig } from "framer-motion";
 import "./globals.css";
 import AppShell from "@/components/shell/AppShell";
 import QuickSearch from "@/components/shell/QuickSearch";
@@ -37,15 +38,19 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider>
-          <CryptoKeyProvider>
-            <TooltipProvider>
-              <AppShell>{children}</AppShell>
-              <QuickSearch />
-              <ToasterClient />
-            </TooltipProvider>
-          </CryptoKeyProvider>
-        </ThemeProvider>
+        {/* reducedMotion="user" makes every framer-motion animation in the app respect the
+            OS-level prefers-reduced-motion setting automatically, without touching each variant. */}
+        <MotionConfig reducedMotion="user">
+          <ThemeProvider>
+            <CryptoKeyProvider>
+              <TooltipProvider>
+                <AppShell>{children}</AppShell>
+                <QuickSearch />
+                <ToasterClient />
+              </TooltipProvider>
+            </CryptoKeyProvider>
+          </ThemeProvider>
+        </MotionConfig>
       </body>
     </html>
   );

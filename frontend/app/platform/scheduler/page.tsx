@@ -90,15 +90,15 @@ export default function SchedulerPage() {
       header: "Actions",
       render: (j) => (
         <div className="flex gap-1.5">
-          <button disabled={busyKey === j.key} onClick={() => act(j.key, "run")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Run Now">
+          <button disabled={busyKey === j.key} onClick={() => act(j.key, "run")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Run Now" aria-label={`Run ${j.label} now`}>
             <PlayCircle size={14} />
           </button>
           {j.enabled ? (
-            <button disabled={busyKey === j.key} onClick={() => act(j.key, "pause")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Pause">
+            <button disabled={busyKey === j.key} onClick={() => act(j.key, "pause")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Pause" aria-label={`Pause ${j.label}`}>
               <Pause size={14} />
             </button>
           ) : (
-            <button disabled={busyKey === j.key} onClick={() => act(j.key, "resume")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Resume">
+            <button disabled={busyKey === j.key} onClick={() => act(j.key, "resume")} className="p-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50" title="Resume" aria-label={`Resume ${j.label}`}>
               <Play size={14} />
             </button>
           )}

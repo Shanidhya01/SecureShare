@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bell, ChevronRight, ClipboardCheck, Cloud, LogOut, Menu, Moon, Search, Settings, ShieldCheck, ShieldHalf, Sun, User as UserIcon } from "lucide-react";
+import { ChevronRight, ClipboardCheck, Cloud, LogOut, Menu, Moon, Search, Settings, ShieldCheck, ShieldHalf, Sun, User as UserIcon } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { useTheme } from "@/context/ThemeContext";
@@ -19,13 +19,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import SidebarNav from "./SidebarNav";
-
-type SecurityEventEntry = {
-  id: string;
-  type: string;
-  message: string;
-  createdAt: string;
-};
+import NotificationCenter from "@/components/design/NotificationCenter";
+import type { SecurityEventEntry } from "@/lib/securityEvents";
 
 export default function Topbar() {
   const router = useRouter();
@@ -33,15 +28,7 @@ export default function Topbar() {
   const { theme, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [events, setEvents] = useState<SecurityEventEntry[]>([]);
-  const [user, setUser] = useState<{ email?: string; name?: string } | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = localStorage.getItem("user");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState<{ email?: string; name?: string } | null>(null);
 
   useEffect(() => {
     const refreshUser = () => {
@@ -52,6 +39,7 @@ export default function Topbar() {
         setUser(null);
       }
     };
+    refreshUser();
     window.addEventListener("auth:changed", refreshUser);
     window.addEventListener("storage", refreshUser);
     return () => {
@@ -68,7 +56,7 @@ export default function Topbar() {
     if (!token) return;
     api
       .get<SecurityEventEntry[]>("/security/events", { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => setEvents((res.data || []).slice(0, 5)))
+      .then((res) => setEvents((res.data || []).slice(0, 20)))
       .catch(() => {});
   }, []);
 
@@ -85,7 +73,7 @@ export default function Topbar() {
   };
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b border-border bg-background/80 backdrop-blur-xl px-4 sm:px-6">
+    <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b border-border bg-background/80 backdrop-blur-xl px-4 sm:px-6 shadow-(--shadow-sm)">
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
@@ -137,35 +125,7 @@ export default function Topbar() {
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label="Notifications"
-            className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-          >
-            <Bell size={18} />
-            {events.length > 0 && (
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background" />
-            )}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Recent security events</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {events.length === 0 ? (
-                <p className="px-2 py-3 text-sm text-muted-foreground">No recent activity.</p>
-              ) : (
-                events.map((e) => (
-                  <DropdownMenuItem key={e.id} className="flex-col items-start gap-0.5 whitespace-normal">
-                    <span className="text-xs text-foreground">{e.message}</span>
-                    <span className="text-[11px] text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => router.push("/audit")}>View all in Audit Logs</DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <NotificationCenter events={events} />
 
         <DropdownMenu>
           <DropdownMenuTrigger
