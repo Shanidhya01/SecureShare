@@ -99,12 +99,31 @@ export const TYPE_META = {
   high_risk_repository: { siemType: "HIGH_RISK_REPOSITORY", severity: "HIGH", category: "DEVSECOPS", label: "High Risk Repository" },
   iac_misconfiguration: { siemType: "IAC_MISCONFIGURATION", severity: "MEDIUM", category: "DEVSECOPS", label: "IaC Misconfiguration" },
   devsecops_scan: { siemType: "DEVSECOPS_SCAN", severity: "INFO", category: "DEVSECOPS", label: "DevSecOps Scan Run" },
-  devsecops_risk_updated: { siemType: "DEVSECOPS_RISK_UPDATED", severity: "INFO", category: "DEVSECOPS", label: "DevSecOps Risk Score Updated" }
+  devsecops_risk_updated: { siemType: "DEVSECOPS_RISK_UPDATED", severity: "INFO", category: "DEVSECOPS", label: "DevSecOps Risk Score Updated" },
+
+  // --- New types (Phase 13: Production Hardening & Cloud Platform Operations) ---
+  // Category "PLATFORM" is deliberately distinct from "AUTOMATION" - services/soar/soarEngine.js
+  // ignores AUTOMATION-category events to prevent automation-triggering-automation loops, but
+  // platform ops events SHOULD be able to trigger SOAR playbooks (notify admin, collect
+  // diagnostics, etc), so they must not share that category. All of these describe managed cloud
+  // dependencies (MongoDB Atlas, Redis Cloud, Cloudinary, ClamAV-on-Render) reachability, not local
+  // host resources - this deployment has no VM to monitor CPU/disk/memory on.
+  platform_health_changed: { siemType: "PLATFORM_HEALTH_CHANGED", severity: "MEDIUM", category: "PLATFORM", label: "Platform Health Changed" },
+  mongodb_offline: { siemType: "MONGODB_OFFLINE", severity: "CRITICAL", category: "PLATFORM", label: "MongoDB Atlas Offline" },
+  redis_offline: { siemType: "REDIS_OFFLINE", severity: "MEDIUM", category: "PLATFORM", label: "Redis Cloud Offline" },
+  clamav_offline: { siemType: "CLAMAV_OFFLINE", severity: "MEDIUM", category: "PLATFORM", label: "ClamAV Offline" },
+  cloudinary_failure: { siemType: "CLOUDINARY_FAILURE", severity: "HIGH", category: "PLATFORM", label: "Cloudinary Failure" },
+  queue_failure: { siemType: "QUEUE_FAILURE", severity: "HIGH", category: "PLATFORM", label: "Queue Failure" },
+  high_api_latency: { siemType: "HIGH_API_LATENCY", severity: "MEDIUM", category: "PLATFORM", label: "High API Latency" },
+  background_job_failed: { siemType: "BACKGROUND_JOB_FAILED", severity: "MEDIUM", category: "PLATFORM", label: "Background Job Failed" },
+  backup_completed: { siemType: "BACKUP_COMPLETED", severity: "INFO", category: "PLATFORM", label: "Backup Completed" },
+  backup_failed: { siemType: "BACKUP_FAILED", severity: "HIGH", category: "PLATFORM", label: "Backup Failed" },
+  platform_report_generated: { siemType: "PLATFORM_REPORT_GENERATED", severity: "INFO", category: "PLATFORM", label: "Platform Report Generated" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM"
 ];
 
 export function resolveEventMeta(type) {

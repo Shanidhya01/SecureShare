@@ -1,9 +1,10 @@
 # SecureShare — API Reference
 
-This file is a route-group-level map of every `/api/*` endpoint namespace across all 12 phases,
-plus full endpoint detail for the newest module (`/api/devsecops`, Phase 12). For full endpoint
-tables of earlier phases, see [README.md's API Endpoints section](README.md#-api-endpoints); this
-file is the quick-reference index across all of them.
+This file is a route-group-level map of every `/api/*` endpoint namespace across all 13 phases,
+plus full endpoint detail for the newest modules (`/api/devsecops`, Phase 12; `/api/platform`,
+Phase 13). For full endpoint tables of earlier phases, see
+[README.md's API Endpoints section](README.md#-api-endpoints); this file is the quick-reference
+index across all of them.
 
 All routes are mounted under `/api` in `backend/server.js`. Unless noted otherwise, authenticated
 routes require `Authorization: Bearer <jwt>`; admin-only routes additionally require the caller's
@@ -30,6 +31,7 @@ account to have `isAdmin: true` or `role` in `["administrator", "org_owner"]`.
 | `/api/compliance` | 10 | Admin | Frameworks, controls, assessments, policies, reports |
 | `/api/cloud` | 11 | Admin | CSPM/ASM assets, findings, certificates, score, reports |
 | `/api/devsecops` | 12 | Admin | Repository, dependency/secret/SAST/container/IaC findings, SBOM, reports |
+| `/api/platform` | 13 | Admin | Platform health, metrics, alerts, background jobs, scheduler, backups, reports |
 
 ## `/api/devsecops` (Phase 12 — DevSecOps & Software Supply Chain Security)
 
@@ -88,3 +90,46 @@ curl "https://your-backend/api/devsecops/export/pdf?reportType=executive" \
 ```
 
 See [README.md's Phase 12 section](README.md#%EF%B8%8F-phase-12-enterprise-devsecops--software-supply-chain-security) for the full architecture writeup, and [ARCHITECTURE.md](ARCHITECTURE.md) for the scan-pipeline diagram.
+
+## `/api/platform` (Phase 13 — Production Hardening & Cloud Platform Operations)
+
+All routes require `auth, requireAdmin` (`backend/routes/platform.routes.js`). Health checks target managed cloud dependencies only (MongoDB Atlas, Redis Cloud, Cloudinary, ClamAV on Render, the Vercel frontend) - there is no local CPU/disk/memory endpoint, since this deployment has no host VM to monitor those on.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/dashboard` | Latest health snapshot, current metrics, active alerts, queue status, scheduled jobs, recent background jobs, recent backups |
+| `GET` | `/health` | Latest persisted health snapshot (`?fresh=true` forces a new check) |
+| `GET` | `/health/history` | Health snapshot history (`?hours=`, default 24) |
+| `GET` | `/metrics` | Current API/scan-duration/auth/scan-activity metrics |
+| `GET` | `/metrics/history` | Persisted metric snapshots (`?hours=`, default 24) |
+| `GET` | `/alerts` | Active alerts (`?active=false` for full history, `?limit=`) |
+| `GET` | `/jobs` | Recent background jobs (`?queue=`, `?status=`) plus queue status |
+| `POST` | `/jobs/run` | Enqueue a background job onto BullMQ (or run inline via the Redis-down fallback) — body: `{ queue, payload }` |
+| `GET` | `/scheduler` | List all scheduled jobs (cron expression, last/next run, status, failure count) — bonus, beyond the core spec |
+| `POST` | `/scheduler/run-now` \| `/scheduler/pause` \| `/scheduler/resume` | Scheduler control — body: `{ key }` — bonus, beyond the core spec |
+| `POST` | `/backup` | Run a backup — body: `{ type: "database"\|"configuration"\|"metadata"\|"audit"\|"full" }` — bonus, beyond the core spec |
+| `GET` | `/backup` | List backup records — bonus, beyond the core spec |
+| `POST` | `/backup/validate` | Re-checksum a backup archive — body: `{ backupId }` — bonus, beyond the core spec |
+| `GET` | `/reports` | List supported platform report types |
+| `POST` | `/reports` | Generate a report — body: `{ reportType, format }` (`reportType`: health/availability/performance/queue/infrastructure; `format`: json/csv/pdf) |
+| `GET` | `/export/pdf` \| `/export/csv` \| `/export/json` | Export a report directly — query `?reportType=` (defaults to `health`) |
+| `POST` | `/scan` | Run an on-demand platform health/metrics/alert scan |
+
+### Example: checking platform health and exporting a report
+
+```bash
+# Force a fresh health check
+curl "https://your-backend/api/platform/health?fresh=true" \
+  -H "Authorization: Bearer <admin_jwt>"
+
+# Export the health report as PDF
+curl "https://your-backend/api/platform/export/pdf?reportType=health" \
+  -H "Authorization: Bearer <admin_jwt>" -o platform-health-report.pdf
+
+# Enqueue an on-demand DevSecOps re-scan
+curl -X POST https://your-backend/api/platform/jobs/run \
+  -H "Authorization: Bearer <admin_jwt>" -H "Content-Type: application/json" \
+  -d '{"queue":"devsecops-scan","payload":{}}'
+```
+
+See [README.md's Phase 13 section](README.md#%EF%B8%8F-phase-13-production-hardening--cloud-platform-operations) and [MONITORING.md](MONITORING.md) for the full architecture and monitoring writeup.

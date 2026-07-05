@@ -950,6 +950,30 @@ Same principle as Phase 11, applied one layer down the stack: SecureShare has no
 
 ---
 
+## ⚙️ Phase 13: Production Hardening & Cloud Platform Operations
+
+Everything needed to run SecureShare on its actual deployment target - Vercel (frontend), Render (backend + ClamAV in Docker), MongoDB Atlas, Redis Cloud, and Cloudinary - with no VPS/self-hosted infrastructure: a Cloud Health Engine, a background job queue, structured observability, an alert engine with SIEM/SOAR integration, and a non-destructive backup manager. No prior phase's code was rewritten - every existing scan orchestrator (Cloud/DevSecOps/Compliance) is reused as-is by the new queue and scheduler.
+
+**Cloud Health Engine** (`backend/services/platform/healthChecker.js`): checks MongoDB Atlas (ping), Redis Cloud (ping), ClamAV on Render (raw `zPING` over the same INSTREAM socket protocol Phase 4 uses), Cloudinary (`api.ping()`), the background job queue, this backend's own Render process, the deployed Vercel frontend (HTTP reachability), and the scheduler's recent run history - each check degrades to `DOWN`/`UNKNOWN` independently rather than throwing, and a weighted overall score/status (`HEALTHY`/`WARNING`/`CRITICAL`) is persisted every run (same shape as Phase 11/12's score engines, applied to managed cloud dependencies instead of security findings). Deliberately **no local CPU/disk/memory monitoring** - this deployment has no host VM to introspect.
+
+**Metrics** (`backend/services/platform/metricsCollector.js`): an in-memory ring buffer of API latency/error-rate/upload/download timings (recorded by `backend/middleware/metrics.middleware.js` on every request), per-scan-type duration (threat/malware/DLP/compliance/SOAR/cloud/DevSecOps/report-generation), authentication success/failure rate (reusing Phase 9's existing `login`/`login_failed` SIEM events - no auth code touched), 24h scan-activity counts aggregated read-only from the existing Threat/DLP/SOAR/Compliance/Cloud/DevSecOps collections, and queue length. Snapshotted every 5 minutes into `PlatformMetricSnapshot` so history survives restarts.
+
+**Alert Engine** (`backend/services/platform/alertEngine.js`): a pure rule array (`MONGODB_OFFLINE`, `REDIS_OFFLINE`, `CLOUDINARY_FAILURE`, `CLAMAV_OFFLINE`, `QUEUE_FAILURE`, `HIGH_ERROR_RATE`, `SLOW_API`, `BACKGROUND_JOB_FAILURE`, `HEALTH_SCORE_DROP`) evaluated against the health/metrics output. Each trigger emits a SIEM event under a new `PLATFORM` category - deliberately *not* `AUTOMATION`, since `soarEngine.js` ignores that category to prevent automation-triggering-automation loops, but platform alerts should still be able to fire SOAR playbooks (notify admin, raise incident, etc).
+
+**Background Job Queue** (`backend/services/platform/queue.js`): BullMQ-backed via Redis Cloud (`threat-scan`, `malware-scan`, `cloud-scan`, `compliance-scan`, `devsecops-scan`, `report-generation`, `notification`, `email`), each queue's handler forwarding to the *existing* orchestrator for that scan type - no scan logic is duplicated. When Redis Cloud is unset or unreachable, jobs run immediately in-process instead, with identical `PlatformJob` status/duration/retry-count/log tracking either way.
+
+**Scheduler** (`backend/services/platform/scheduler.js`): wraps every `node-cron` schedule - including the pre-existing Phase 10/11/12 daily scans, now re-registered through this instead of raw `cron.schedule` calls - with last/next run, duration, status, and failure-count tracking in `PlatformScheduledJob`. A platform health/metrics/alert scan runs every 5 minutes and a full backup runs nightly at 02:00.
+
+**Backup Manager** (`backend/services/platform/backupManager.js`): database (JSON dump of key collections), configuration (safe, non-secret env keys only), metadata, and audit-log backups, packaged as SHA-256-checksummed ZIP archives. Validation re-hashes the archive and compares against the stored checksum - **no destructive restore is implemented**, per design.
+
+**Compliance integration, for free**: a new `platformOpsEvaluator` (`controlEvaluators.js`) scores platform availability, average health score, and hours-since-last-backup, seeded as one control under ISO 27001, SOC 2, NIST CSF, and PCI DSS - so platform reliability now automatically feeds those frameworks' availability/operational-resilience controls.
+
+**Platform dashboard**: `/platform` (plus `/platform/scheduler`, `/backups`, and `/reports`) - Platform Health, MongoDB, Redis, Cloudinary, and ClamAV status cards, average response time, background queue, active alerts, and availability, plus 8 Recharts visualizations (API latency, request volume, health trend, queue length, job duration, alert trend, authentication trend, upload performance). Admin-only end to end (`requireAdmin` on every `/api/platform/*` route), matching Compliance/SOAR/Cloud Security/DevSecOps's gating.
+
+**Deployment**: no Docker Compose or Nginx in production - the backend deploys to Render (optionally via its own Dockerfile, or a native Node buildpack), the frontend to Vercel, and ClamAV as its own Docker service on Render. See `DEPLOYMENT.md` for the full guide and `MONITORING.md` for the monitoring reference.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -1858,5 +1882,5 @@ Planned features and improvements:
 ---
 
 **Last Updated**: July 2026
-**Version**: 4.0.0 (Phase 4 — Malware Scanning & Threat Detection)
+**Version**: 13.0.0 (Phase 13 — Production Hardening, Platform Operations & Reliability)
 **Status**: Production Ready ✅

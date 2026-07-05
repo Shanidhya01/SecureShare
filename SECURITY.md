@@ -146,6 +146,22 @@ A self-scanning layer over SecureShare's own repository, dependencies, source co
 
 **What Phase 12 does not do**: it does not scan or build container images, does not call any real CVE database/NVD API (the dependency/base-image advisory tables are small, curated, offline lists), does not enforce a real deployment gate, and does not certify supply-chain compliance with any standard - it is a continuous internal self-assessment tool, like Phase 10 and Phase 11.
 
+### Production Hardening & Cloud Platform Operations (Phase 13)
+
+An operational-resilience layer, not a new detection or crypto boundary - it monitors and reports on the health of SecureShare's managed cloud dependencies (MongoDB Atlas, Redis Cloud, Cloudinary, ClamAV on Render) and its own deployed services (Vercel frontend, Render backend), and its only enforcement-adjacent action is firing existing SOAR playbooks (notify admin, raise incident) when a rule matches. This deployment target has no VPS/host to run Nginx or Docker Compose orchestration on, so there is deliberately no local CPU/disk/memory/network monitoring - every health check is a reachability/latency probe against a managed dependency.
+
+**Redis is optional, everywhere it's used**: rate limiting, the background job queue, and health checks all check `isRedisAvailable()` before touching Redis Cloud and fall back to an in-memory/in-process equivalent otherwise. No feature (including uploads, downloads, and every prior phase's scan) becomes unavailable solely because Redis is unset or unreachable - this was a deliberate design constraint, not an incidental property.
+
+**Backups are read-only and non-destructive by design**: `backupManager.js` only ever creates archives and re-validates their checksum - there is no restore/import code path at all, so a compromised or malicious backup-management request can read data into an archive but can never overwrite live data.
+
+**Configuration backups never include secrets**: `createConfigurationBackup()` reads from an explicit allow-list of non-secret environment variable names (port, log level, WebAuthn RP config, etc.) - `JWT_SECRET`, database credentials, and API keys are never included, even accidentally, since the backup only ever reads keys present in that allow-list.
+
+**Alert events use a distinct SIEM category so SOAR can still act on them**: `soarEngine.js` ignores events categorized `AUTOMATION` to prevent automation-triggering-automation loops (Phase 8's original safeguard). Platform alerts are categorized `PLATFORM` instead - a deliberate choice so an admin-notification playbook can still fire in response to, say, a `MONGODB_OFFLINE` alert.
+
+**Authentication metrics reuse existing events rather than adding new instrumentation**: the authentication success/failure rate on `/platform` is computed from Phase 9's existing `login`/`login_failed` SIEM events - no code in the auth controller or login flow was touched to build this.
+
+**What Phase 13 does not do**: it does not implement real email/SMTP delivery (alerts still route through the same in-app `Notification` mechanism every prior phase uses); it does not provide a destructive database restore; it does not add a new authentication or encryption boundary; and it does not time every scan's duration - threat/malware/DLP scans that run inline during upload aren't instrumented (only re-scans routed through the Phase 13 background queue are), since timing the inline path would require touching Phase 4/5's upload controller.
+
 ---
 
 ## Supported Algorithms

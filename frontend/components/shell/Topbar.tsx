@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bell, ChevronRight, ClipboardCheck, Cloud, LogOut, Menu, Settings, ShieldCheck, ShieldHalf, User as UserIcon } from "lucide-react";
+import { Bell, ChevronRight, ClipboardCheck, Cloud, LogOut, Menu, Moon, Search, Settings, ShieldCheck, ShieldHalf, Sun, User as UserIcon } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
+import { useTheme } from "@/context/ThemeContext";
 import { navItems } from "./navItems";
 import {
   DropdownMenu,
@@ -29,6 +30,7 @@ type SecurityEventEntry = {
 export default function Topbar() {
   const router = useRouter();
   const pathname = usePathname();
+  const { theme, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [events, setEvents] = useState<SecurityEventEntry[]>([]);
   const [user, setUser] = useState<{ email?: string; name?: string } | null>(() => {
@@ -106,6 +108,35 @@ export default function Topbar() {
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event("quicksearch:open"))}
+          className="hidden sm:inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm text-muted-foreground hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          <Search size={15} />
+          <span>Search…</span>
+          <kbd className="ml-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Ctrl K
+          </kbd>
+        </button>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event("quicksearch:open"))}
+          aria-label="Search"
+          className="sm:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/5 hover:text-foreground"
+        >
+          <Search size={18} />
+        </button>
+
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="Notifications"

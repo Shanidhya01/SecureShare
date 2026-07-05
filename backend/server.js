@@ -2,7 +2,6 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
-import cron from "node-cron";
 
 import authRoutes from "./routes/auth.routes.js";
 import fileRoutes from "./routes/file.routes.js";
@@ -22,22 +21,38 @@ import ipRoutes from "./routes/ip.routes.js";
 import complianceRoutes from "./routes/compliance.routes.js";
 import cloudRoutes from "./routes/cloud.routes.js";
 import devsecopsRoutes from "./routes/devsecops.routes.js";
+import platformRoutes from "./routes/platform.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
+import { requestContext } from "./middleware/requestContext.middleware.js";
+import { metrics } from "./middleware/metrics.middleware.js";
+import { getRedisClient } from "./middleware/redisClient.js";
 import { ensureSeedRules } from "./services/threatIntel/yaraEngine.js";
 import { ensureSeedPlaybooks } from "./services/soar/seedPlaybooks.js";
 import { ensureSeedFrameworks } from "./services/compliance/seedFrameworks.js";
 import { runAssessment } from "./services/compliance/complianceEngine.js";
 import { runCloudScan } from "./services/cloud/cloudScanOrchestrator.js";
 import { runDevSecOpsScan } from "./services/devsecops/devSecOpsOrchestrator.js";
+import { runPlatformScan } from "./services/platform/platformOrchestrator.js";
+import { initQueues } from "./services/platform/queue.js";
+import { registerScheduledJob } from "./services/platform/scheduler.js";
+import { recordScanDuration } from "./services/platform/metricsCollector.js";
+import { logger } from "./utils/logger.js";
 import User from "./models/User.js";
 
 dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1); // Trust the first proxy (load balancer, reverse proxy, etc.)
+app.use(requestContext);
+app.use(metrics);
 app.use(cors());
 app.use(express.json());
 app.use("/api", apiLimiter);
+
+// Phase 13 (Platform Operations): shared Redis client for rate limiting/queue/health checks.
+// Non-fatal if REDIS_URL is unset or unreachable - every consumer degrades gracefully (Part 4/6).
+getRedisClient();
+initQueues();
 
 if (!process.env.MONGO_URI) {
   console.error("MongoDB connection error: MONGO_URI is not set in backend/.env");
@@ -49,11 +64,10 @@ if (!process.env.MONGO_URI) {
       ensureSeedRules().catch((err) => console.error("Failed to seed YARA rules:", err.message));
       ensureSeedPlaybooks().catch((err) => console.error("Failed to seed SOAR playbooks:", err.message));
       ensureSeedFrameworks().catch((err) => console.error("Failed to seed compliance frameworks:", err.message));
-      scheduleDailyComplianceScan();
-      scheduleDailyCloudScan();
+      registerAllScheduledJobs().catch((err) => console.error("Failed to register scheduled jobs:", err.message));
       runStartupCloudScan();
-      scheduleDailyDevSecOpsScan();
       runStartupDevSecOpsScan();
+      runStartupPlatformScan();
     })
     .catch((err) => console.error("MongoDB connection error:", err.message));
 }
@@ -80,39 +94,79 @@ app.use("/api/iam", iamRoutes);
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/cloud", cloudRoutes);
 app.use("/api/devsecops", devsecopsRoutes);
+app.use("/api/platform", platformRoutes);
 app.use("/api", ipRoutes);
 
-// Phase 10 (Compliance & Governance): continuous compliance - re-run the full assessment once a
-// day at 03:00 server time, using `node-cron` (already a dependency, previously only wired up in
-// the unused backend/cron/cleanup.js). Attributed to the first admin account found so the
-// resulting SIEM events have a valid `owner` (SecurityEvent.owner is required); silently skipped
-// if no admin exists yet.
-function scheduleDailyComplianceScan() {
-  cron.schedule("0 3 * * *", async () => {
-    try {
-      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
-      if (!admin) return;
-      await runAssessment({ owner: admin._id });
-    } catch (err) {
-      console.error("Scheduled compliance scan failed:", err.message);
-    }
-  });
+async function firstAdmin() {
+  return User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
 }
 
-// Phase 11 (CSPM/ASM): continuous posture scanning - one daily scan (offset from Compliance's
-// 03:00 slot) plus a one-off scan ~10s after every server startup/deployment, both attributed to
-// the first admin account exactly like scheduleDailyComplianceScan(). Config/policy-change and
-// "on deploy" triggers (PART 10) are satisfied by the manual POST /api/cloud/scan endpoint, which
-// a deploy pipeline or the policy-update handlers can call - there's no reliable way to detect
-// "a deploy just happened" from inside the already-running process it deployed.
-function scheduleDailyCloudScan() {
-  cron.schedule("0 4 * * *", async () => {
-    try {
-      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+/** Times a scheduled scan and records it via metricsCollector.recordScanDuration (PART 2) -
+ *  Phase 13's own instrumentation, no other phase's orchestrator code is touched. */
+async function timedScan(metricKey, fn) {
+  const start = Date.now();
+  await fn();
+  recordScanDuration(metricKey, Date.now() - start);
+}
+
+// Phase 13 (Platform Operations) PART 11: every recurring scan (Phase 10/11/12's daily scans, plus
+// the new Phase 13 platform health/backup schedules) is registered through
+// services/platform/scheduler.js instead of calling `cron.schedule` directly, so the Scheduler
+// Dashboard can show last/next run, execution time, status, retries, and expose Run Now/Pause/
+// Resume - the cron expressions/timing themselves are unchanged from before this phase.
+async function registerAllScheduledJobs() {
+  await registerScheduledJob({
+    key: "compliance-daily-scan",
+    label: "Daily Compliance Assessment",
+    cronExpression: "0 3 * * *",
+    fn: async () => {
+      const admin = await firstAdmin();
       if (!admin) return;
-      await runCloudScan({ owner: admin._id });
-    } catch (err) {
-      console.error("Scheduled cloud scan failed:", err.message);
+      await timedScan("complianceScan", () => runAssessment({ owner: admin._id }));
+    }
+  });
+
+  await registerScheduledJob({
+    key: "cloud-daily-scan",
+    label: "Daily Cloud Security Scan",
+    cronExpression: "0 4 * * *",
+    fn: async () => {
+      const admin = await firstAdmin();
+      if (!admin) return;
+      await timedScan("cloudScan", () => runCloudScan({ owner: admin._id }));
+    }
+  });
+
+  await registerScheduledJob({
+    key: "devsecops-daily-scan",
+    label: "Daily DevSecOps Scan",
+    cronExpression: "0 5 * * *",
+    fn: async () => {
+      const admin = await firstAdmin();
+      if (!admin) return;
+      await timedScan("devSecOpsScan", () => runDevSecOpsScan({ owner: admin._id }));
+    }
+  });
+
+  // Phase 13: platform health/metrics/alerts every 5 minutes, and a full database+audit backup
+  // nightly at 02:00 (ahead of Compliance's 03:00 slot).
+  await registerScheduledJob({
+    key: "platform-health-scan",
+    label: "Platform Health Check",
+    cronExpression: "*/5 * * * *",
+    fn: async () => {
+      const admin = await firstAdmin();
+      await runPlatformScan({ owner: admin?._id });
+    }
+  });
+
+  await registerScheduledJob({
+    key: "platform-nightly-backup",
+    label: "Nightly Platform Backup",
+    cronExpression: "0 2 * * *",
+    fn: async () => {
+      const { runBackup } = await import("./services/platform/backupManager.js");
+      await runBackup({ type: "full" });
     }
   });
 }
@@ -120,7 +174,7 @@ function scheduleDailyCloudScan() {
 function runStartupCloudScan() {
   setTimeout(async () => {
     try {
-      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      const admin = await firstAdmin();
       if (!admin) return;
       await runCloudScan({ owner: admin._id });
     } catch (err) {
@@ -129,33 +183,27 @@ function runStartupCloudScan() {
   }, 10000);
 }
 
-// Phase 12 (DevSecOps/Supply Chain): continuous supply-chain scanning - one daily scan (offset
-// from Compliance's 03:00 and Cloud's 04:00 slots) plus a one-off scan ~10s after every server
-// startup, both attributed to the first admin account, exactly mirroring Phase 11's cloud-scan
-// scheduling pattern. The startup scan skips the live npm-registry "outdated version" check
-// (checkLiveDependencies: false) so server boot never depends on network reachability.
-function scheduleDailyDevSecOpsScan() {
-  cron.schedule("0 5 * * *", async () => {
-    try {
-      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
-      if (!admin) return;
-      await runDevSecOpsScan({ owner: admin._id });
-    } catch (err) {
-      console.error("Scheduled DevSecOps scan failed:", err.message);
-    }
-  });
-}
-
 function runStartupDevSecOpsScan() {
   setTimeout(async () => {
     try {
-      const admin = await User.findOne({ $or: [{ isAdmin: true }, { role: { $in: ["administrator", "org_owner"] } }] }).select("_id");
+      const admin = await firstAdmin();
       if (!admin) return;
       await runDevSecOpsScan({ owner: admin._id, checkLiveDependencies: false });
     } catch (err) {
       console.error("Startup DevSecOps scan failed:", err.message);
     }
   }, 15000);
+}
+
+function runStartupPlatformScan() {
+  setTimeout(async () => {
+    try {
+      const admin = await firstAdmin();
+      await runPlatformScan({ owner: admin?._id });
+    } catch (err) {
+      console.error("Startup platform scan failed:", err.message);
+    }
+  }, 20000);
 }
 
 // Root and health endpoints
@@ -167,4 +215,5 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
 
-app.listen(5000, () => console.log("Server running"));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => logger.info("server_started", { port: PORT, env: process.env.NODE_ENV || "development", severity: "INFO" }));

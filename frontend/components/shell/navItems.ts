@@ -15,6 +15,7 @@ import {
   ClipboardCheck,
   Cloud,
   ShieldHalf,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 
@@ -36,6 +37,7 @@ export const navItems: NavItem[] = [
   { label: "Compliance", href: "/compliance", icon: ClipboardCheck },
   { label: "Cloud Security", href: "/cloud-security", icon: Cloud },
   { label: "DevSecOps", href: "/devsecops", icon: ShieldHalf },
+  { label: "Platform", href: "/platform", icon: Activity },
   { label: "Security Center", href: "/security", icon: ShieldCheck },
   { label: "Security Operations", href: "/soc", icon: Radar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },

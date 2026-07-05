@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/shell/AppShell";
+import QuickSearch from "@/components/shell/QuickSearch";
 import ToasterClient from "@/components/ToasterClient";
 import { CryptoKeyProvider } from "@/context/CryptoKeyContext";
 import { ThemeProvider, noFlashThemeScript } from "@/context/ThemeContext";
@@ -40,6 +41,7 @@ export default function RootLayout({
           <CryptoKeyProvider>
             <TooltipProvider>
               <AppShell>{children}</AppShell>
+              <QuickSearch />
               <ToasterClient />
             </TooltipProvider>
           </CryptoKeyProvider>

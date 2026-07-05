@@ -34,7 +34,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "A.5.18", title: "Access Rights Management", category: "Access Control", severity: "MEDIUM", evaluatorKey: "identityEvaluator", recommendation: "Assign and periodically review RBAC roles for every account." },
     { controlId: "A.8.1", title: "User Endpoint Devices", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain a trusted-device inventory and revoke stale devices." },
     { controlId: "A.5.30", title: "Cloud Security Posture", category: "Operations Security", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Remediate open CSPM/ASM findings (misconfigurations, exposed endpoints, expiring certificates)." },
-    { controlId: "A.8.28", title: "Secure Coding & Supply Chain Security", category: "Operations Security", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Remediate open dependency/secret/SAST/container/IaC findings from the DevSecOps pipeline." }
+    { controlId: "A.8.28", title: "Secure Coding & Supply Chain Security", category: "Operations Security", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Remediate open dependency/secret/SAST/container/IaC findings from the DevSecOps pipeline." },
+    { controlId: "A.8.14", title: "Redundancy of Information Processing Facilities", category: "Operations Security", severity: "HIGH", evaluatorKey: "platformOpsEvaluator", recommendation: "Maintain platform availability and recent backups to support operational resilience." }
   ],
   SOC2: [
     { controlId: "CC6.1", title: "Logical Access Controls", category: "Security", severity: "HIGH", evaluatorKey: "mfaEvaluator", recommendation: "Enforce MFA as a logical access control." },
@@ -48,7 +49,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "CC6.3", title: "Role-Based Access Provisioning", category: "Security", severity: "MEDIUM", evaluatorKey: "identityEvaluator", recommendation: "Provision access based on assigned roles and review regularly." },
     { controlId: "CC6.1-RISK", title: "Risk-Based Authentication", category: "Security", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Challenge high-risk logins with step-up authentication." },
     { controlId: "CC7.1", title: "Cloud Security Posture Monitoring", category: "Security", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Continuously monitor and remediate cloud configuration/exposure findings." },
-    { controlId: "CC8.1", title: "Change Management & Supply Chain Security", category: "Security", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Scan dependencies, secrets, source code, containers, and IaC before deploying changes." }
+    { controlId: "CC8.1", title: "Change Management & Supply Chain Security", category: "Security", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Scan dependencies, secrets, source code, containers, and IaC before deploying changes." },
+    { controlId: "A1.2", title: "System Availability & Recovery", category: "Availability", severity: "HIGH", evaluatorKey: "platformOpsEvaluator", recommendation: "Monitor platform health/availability continuously and maintain recent recoverable backups." }
   ],
   GDPR: [
     { controlId: "Art.32", title: "Security of Processing", category: "Data Protection", severity: "CRITICAL", evaluatorKey: "encryptionEvaluator", recommendation: "Apply encryption as an Article 32 technical measure." },
@@ -80,7 +82,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "8.3", title: "Strong Authentication for Users and Administrators", category: "Access Control", severity: "HIGH", evaluatorKey: "passwordPolicyEvaluator", recommendation: "Enforce strong password requirements for all accounts." },
     { controlId: "9.2", title: "Physical/Device Access Controls", category: "Access Control", severity: "MEDIUM", evaluatorKey: "deviceTrustEvaluator", recommendation: "Maintain and review a trusted-device inventory." },
     { controlId: "11.3", title: "Vulnerability/Attack Surface Scanning", category: "Vulnerability Management", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Run regular external/internal vulnerability and attack-surface scans and remediate findings." },
-    { controlId: "6.3", title: "Bespoke and Custom Software Security (Supply Chain)", category: "Vulnerability Management", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Identify and remediate known vulnerabilities in dependencies, source code, and container images before deployment." }
+    { controlId: "6.3", title: "Bespoke and Custom Software Security (Supply Chain)", category: "Vulnerability Management", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Identify and remediate known vulnerabilities in dependencies, source code, and container images before deployment." },
+    { controlId: "A2.1", title: "System Availability & Backup Recovery", category: "Monitoring", severity: "HIGH", evaluatorKey: "platformOpsEvaluator", recommendation: "Maintain platform availability and validated, recent backups of the cardholder data environment." }
   ],
   NIST_CSF: [
     { controlId: "PR.DS-1", title: "Data-at-Rest Protection", category: "Protect", severity: "CRITICAL", evaluatorKey: "encryptionEvaluator", recommendation: "Protect data-at-rest with encryption." },
@@ -96,7 +99,8 @@ const CONTROLS_BY_FRAMEWORK = {
     { controlId: "PR.DS-6", title: "Integrity Checking Mechanisms", category: "Protect", severity: "MEDIUM", evaluatorKey: "fileIntegrityEvaluator", recommendation: "Verify software/firmware/information integrity using checking mechanisms." },
     { controlId: "DE.CM-3", title: "Personnel Activity Monitoring", category: "Detect", severity: "MEDIUM", evaluatorKey: "adaptiveAuthEvaluator", recommendation: "Monitor personnel activity for risk-based authentication events." },
     { controlId: "ID.RA-1", title: "Asset Vulnerabilities Identified", category: "Identify", severity: "HIGH", evaluatorKey: "cloudSecurityEvaluator", recommendation: "Continuously identify and remediate asset/configuration vulnerabilities via CSPM/ASM scanning." },
-    { controlId: "ID.SC-4", title: "Supply Chain Risk Management", category: "Identify", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Assess suppliers/dependencies against dependency, secret, SAST, container, and IaC scan results." }
+    { controlId: "ID.SC-4", title: "Supply Chain Risk Management", category: "Identify", severity: "HIGH", evaluatorKey: "devSecOpsEvaluator", recommendation: "Assess suppliers/dependencies against dependency, secret, SAST, container, and IaC scan results." },
+    { controlId: "PR.PT-5", title: "Resilience Mechanisms & Recovery", category: "Protect", severity: "HIGH", evaluatorKey: "platformOpsEvaluator", recommendation: "Implement resilience mechanisms (health monitoring, backups) to meet availability requirements." }
   ],
   CIS: [
     { controlId: "CIS-6.5", title: "Multi-Factor Authentication", category: "Access Control", severity: "HIGH", evaluatorKey: "mfaEvaluator", recommendation: "Require MFA for all accounts." },

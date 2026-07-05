@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { ScrollText, AlertCircle, Search, Download } from "lucide-react";
+import { ScrollText, AlertCircle } from "lucide-react";
 import { apiErrorStatus } from "@/lib/errors";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import Pagination from "@/components/design/Pagination";
+import FilterBar from "@/components/design/FilterBar";
 import StatusBadge, { type StatusTone } from "@/components/design/StatusBadge";
 import { TableSkeleton } from "@/components/design/Skeletons";
 
@@ -103,33 +104,36 @@ export default function AuditLogsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const handleExportCsv = () => {
-    const header = ["Type", "Message", "IP", "Country", "Filename", "Time"];
-    const rows = filtered.map((e) => [
-      typeLabel[e.type],
-      e.message.replace(/"/g, '""'),
-      e.ip || "",
-      e.country || "",
-      e.filename || "",
-      new Date(e.createdAt).toISOString(),
-    ]);
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `secureshare-audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   const columns: DataTableColumn<SecurityEventEntry>[] = [
-    { key: "type", header: "Event", render: (e) => <StatusBadge label={typeLabel[e.type]} tone={typeTone[e.type]} /> },
-    { key: "message", header: "Details", render: (e) => <span className="max-w-md truncate inline-block">{e.message}</span> },
-    { key: "ip", header: "IP / Country", render: (e) => <span className="font-mono text-xs">{e.ip || "-"} {e.country && e.country !== "Unknown" ? `(${e.country})` : ""}</span> },
-    { key: "time", header: "Time", className: "whitespace-nowrap text-xs text-muted-foreground", render: (e) => new Date(e.createdAt).toLocaleString() },
+    {
+      key: "type",
+      header: "Event",
+      sortable: true,
+      sortValue: (e) => typeLabel[e.type],
+      csvValue: (e) => typeLabel[e.type],
+      render: (e) => <StatusBadge label={typeLabel[e.type]} tone={typeTone[e.type]} />,
+    },
+    {
+      key: "message",
+      header: "Details",
+      csvValue: (e) => e.message,
+      render: (e) => <span className="max-w-md truncate inline-block">{e.message}</span>,
+    },
+    {
+      key: "ip",
+      header: "IP / Country",
+      csvValue: (e) => `${e.ip || ""} ${e.country && e.country !== "Unknown" ? `(${e.country})` : ""}`.trim(),
+      render: (e) => <span className="font-mono text-xs">{e.ip || "-"} {e.country && e.country !== "Unknown" ? `(${e.country})` : ""}</span>,
+    },
+    {
+      key: "time",
+      header: "Time",
+      className: "whitespace-nowrap text-xs text-muted-foreground",
+      sortable: true,
+      sortValue: (e) => new Date(e.createdAt).getTime(),
+      csvValue: (e) => new Date(e.createdAt).toISOString(),
+      render: (e) => new Date(e.createdAt).toLocaleString(),
+    },
   ];
 
   const resetFilters = () => {
@@ -148,17 +152,6 @@ export default function AuditLogsPage() {
         icon={ScrollText}
         title="Audit Logs"
         description="A searchable trail of security-relevant events on your account."
-        actions={
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            disabled={filtered.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-white/5 text-foreground font-semibold rounded-lg text-sm ring-1 ring-border transition-colors disabled:opacity-50"
-          >
-            <Download size={16} />
-            Export CSV
-          </button>
-        }
       />
 
       {error && (
@@ -168,70 +161,45 @@ export default function AuditLogsPage() {
         </div>
       )}
 
-      <div className="mb-6 flex flex-col lg:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-3 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
+      <FilterBar
+        search={search}
+        onSearchChange={(value) => {
+          setSearch(value);
+          setPage(1);
+        }}
+        searchPlaceholder="Search by message, IP, filename, or country..."
+        selects={[
+          {
+            id: "type",
+            label: "Filter by event type",
+            value: typeFilter,
+            onChange: (value) => {
+              setTypeFilter(value);
               setPage(1);
-            }}
-            placeholder="Search by message, IP, filename, or country..."
-            className="w-full pl-9 pr-4 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground placeholder-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-          />
-        </div>
-        <select
-          aria-label="Filter by event type"
-          value={typeFilter}
-          onChange={(e) => {
-            setTypeFilter(e.target.value);
+            },
+            options: [
+              { value: "all", label: "All event types" },
+              ...(Object.keys(typeLabel) as SecurityEventEntry["type"][]).map((t) => ({
+                value: t,
+                label: typeLabel[t],
+              })),
+            ],
+          },
+        ]}
+        dateRange={{
+          from: fromDate,
+          to: toDate,
+          onFromChange: (value) => {
+            setFromDate(value);
             setPage(1);
-          }}
-          className="px-4 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-        >
-          <option value="all">All event types</option>
-          {(Object.keys(typeLabel) as SecurityEventEntry["type"][]).map((t) => (
-            <option key={t} value={t}>
-              {typeLabel[t]}
-            </option>
-          ))}
-        </select>
-        <div className="flex items-center gap-2">
-          <label htmlFor="fromDate" className="sr-only">From date</label>
-          <input
-            id="fromDate"
-            type="date"
-            value={fromDate}
-            onChange={(e) => {
-              setFromDate(e.target.value);
-              setPage(1);
-            }}
-            className="px-3 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-          />
-          <span className="text-muted-foreground text-sm">to</span>
-          <label htmlFor="toDate" className="sr-only">To date</label>
-          <input
-            id="toDate"
-            type="date"
-            value={toDate}
-            onChange={(e) => {
-              setToDate(e.target.value);
-              setPage(1);
-            }}
-            className="px-3 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-          />
-        </div>
-        {filtersActive && (
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg hover:bg-white/5 transition-colors"
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
+          },
+          onToChange: (value) => {
+            setToDate(value);
+            setPage(1);
+          },
+        }}
+        onReset={filtersActive ? resetFilters : undefined}
+      />
 
       {loading ? (
         <TableSkeleton rows={8} cols={4} />
@@ -239,7 +207,16 @@ export default function AuditLogsPage() {
         <EmptyState icon={ScrollText} title="No matching events" description="No security events match your current search or filter." />
       ) : (
         <>
-          <DataTable columns={columns} rows={pageRows} rowKey={(e) => e.id} stickyHeader maxHeight="65vh" />
+          <DataTable
+            columns={columns}
+            rows={pageRows}
+            rowKey={(e) => e.id}
+            stickyHeader
+            maxHeight="65vh"
+            enableColumnPicker
+            enableExport
+            exportFilename={`secureshare-audit-log-${new Date().toISOString().slice(0, 10)}`}
+          />
           <Pagination page={page} totalPages={totalPages} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         </>
       )}

@@ -17,6 +17,8 @@ import { getPolicy } from "../../models/SecurityPolicy.js";
 import ComplianceEvidence from "../../models/ComplianceEvidence.js";
 import CloudFinding from "../../models/CloudFinding.js";
 import DevSecOpsFinding from "../../models/DevSecOpsFinding.js";
+import PlatformHealthSnapshot from "../../models/PlatformHealthSnapshot.js";
+import PlatformBackup from "../../models/PlatformBackup.js";
 import { getCurrentPolicyValues } from "./policyEvaluator.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +89,18 @@ export async function buildComplianceContext() {
 
   const inactiveUsers90d = Math.max(0, totalUsers - activeUsers90d.length);
 
+  const [recentHealthSnapshots, lastBackup] = await Promise.all([
+    PlatformHealthSnapshot.find({ checkedAt: { $gte: since30d } }).select("overallScore overallStatus").lean(),
+    PlatformBackup.findOne({ status: "completed" }).sort({ createdAt: -1 }).lean()
+  ]);
+  const availabilityPct = recentHealthSnapshots.length
+    ? Number(((recentHealthSnapshots.filter((s) => s.overallStatus !== "CRITICAL").length / recentHealthSnapshots.length) * 100).toFixed(2))
+    : 100;
+  const healthScore = recentHealthSnapshots.length
+    ? Math.round(recentHealthSnapshots.reduce((sum, s) => sum + s.overallScore, 0) / recentHealthSnapshots.length)
+    : 100;
+  const hoursSinceLastBackup = lastBackup ? Math.round((Date.now() - new Date(lastBackup.createdAt).getTime()) / (60 * 60 * 1000)) : null;
+
   return {
     encryption: { totalFiles, encryptedFiles },
     mfa: { totalUsers, mfaEnabledUsers, requireMFA: !!securityPolicy.requireMFA },
@@ -118,6 +132,7 @@ export async function buildComplianceContext() {
     fileIntegrity: { totalFiles, hashedFiles },
     cloudSecurity: { openCritical: openCriticalCloudFindings, openHigh: openHighCloudFindings, totalOpen: totalOpenCloudFindings },
     devSecOps: { openCritical: openCriticalDevSecOpsFindings, openHigh: openHighDevSecOpsFindings, totalOpen: totalOpenDevSecOpsFindings },
+    platformOps: { availabilityPct, healthScore, hoursSinceLastBackup },
     _raw: { securityPolicy, compliancePolicyValues }
   };
 }
@@ -147,5 +162,6 @@ export const EVALUATOR_SOURCE_TYPE = {
   digitalSignatureEvaluator: "FILE_METADATA",
   fileIntegrityEvaluator: "FILE_METADATA",
   cloudSecurityEvaluator: "SECURITY_EVENT",
-  devSecOpsEvaluator: "SECURITY_EVENT"
+  devSecOpsEvaluator: "SECURITY_EVENT",
+  platformOpsEvaluator: "SECURITY_EVENT"
 };

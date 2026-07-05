@@ -95,3 +95,60 @@ Repository  DevSecOpsFinding (category: DEPENDENCY|SECRET|SAST|CONTAINER|IAC)  P
 **Data model**: `Repository` (one self-scanned row) + `DevSecOpsFinding` (category: DEPENDENCY | SECRET | SAST | CONTAINER | IAC | PIPELINE) + `SBOMDocument`/`PipelineRun`/`ArtifactSignature` → `DevSecOpsScoreSnapshot` (one per scan run, backing the dashboard's trend chart) - the same "current state + append-only history" shape Phase 10/11 already established.
 
 For the full endpoint list, SIEM event catalog, and SOAR trigger wiring, see [README.md's Phase 12 section](README.md#%EF%B8%8F-phase-12-enterprise-devsecops--software-supply-chain-security), [API.md](API.md), and [CHANGELOG.md](CHANGELOG.md).
+
+## Phase 13: Production Hardening & Cloud Platform Operations
+
+An operations layer over the platform's managed cloud dependencies, wired through the same existing SIEM/SOAR/Compliance plumbing every prior phase uses - no new orchestration engine, and no VPS/host-level monitoring since this deployment target (Vercel + Render + MongoDB Atlas + Redis Cloud + Cloudinary) has no VM to introspect.
+
+```
+                    ┌────────────────────────────────┐
+                    │   platformOrchestrator.js       │
+                    │      runPlatformScan()          │
+                    └────────────────┬─────────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              ▼                      ▼                      ▼
+       healthChecker.js      metricsCollector.js      alertEngine.js
+  (MongoDB Atlas/Redis Cloud/  (API latency/error-rate,  (rule array over
+   Cloudinary/ClamAV-Render/    scan durations, auth       health + metrics)
+   queue/backend+frontend/      success rate, scan-
+   scheduler)                    activity counts)
+              │                      │                      │
+              ▼                      ▼                      ▼
+   PlatformHealthSnapshot   PlatformMetricSnapshot     PlatformAlert
+              │                      │                      │
+              └──────────────────────┴──────────────────────┘
+                                     │
+                                     ▼
+                     logSecurityEvent() ──▶ SIEM correlation ──▶ SOAR engine
+                                     │                            │
+                                     ▼                            ▼
+                        platformOpsEvaluator            admin notification /
+                     (lowers ISO27001/SOC2/NIST/          incident playbooks
+                        PCI DSS availability scores)
+
+        ┌─────────────────────┐        ┌──────────────────────┐
+        │   scheduler.js       │        │   queue.js (BullMQ +   │
+        │ (last/next run,       │        │   Redis Cloud)          │
+        │  status, failures,    │        │  threat/malware/cloud/  │
+        │  tracked in            │        │  compliance/devsecops/  │
+        │  PlatformScheduledJob) │        │  report/notification/   │
+        └─────────────────────┘        │  email queues, or        │
+                                        │  in-process fallback      │
+                                        │  when Redis Cloud is down │
+                                        └──────────────────────┘
+                                     │
+                                     ▼
+                            PlatformJob (status/duration/
+                             retryCount/logs either way)
+```
+
+**Trigger points**: a platform health/metrics/alert scan every 5 minutes and a nightly full backup at 02:00, both registered through `scheduler.js` alongside the pre-existing Phase 10/11/12 daily scans (which are now also registered through it, unchanged in timing), plus `POST /api/platform/scan` for on-demand runs.
+
+**Graceful degradation is structural, not incidental**: `middleware/redisClient.js`'s `isRedisAvailable()` is checked by rate limiting, the queue, and the health checker independently - each has its own fallback path (in-memory rate-limit store, in-process job execution, a `DOWN` health component) rather than one central "Redis mode" flag, so a Redis Cloud outage degrades functionality gracefully instead of cascading into a full outage.
+
+**No reverse proxy or container orchestration layer**: Vercel and Render each handle their own TLS termination, reverse proxying, and process supervision for this deployment target - Phase 13 adds no Nginx configuration or Docker Compose stack. `backend/Dockerfile` remains available for teams who prefer Render's Docker deploy option, but is not required (Render's native Node buildpack works identically).
+
+**Data model**: `PlatformHealthSnapshot`/`PlatformMetricSnapshot` (one per scan run, backing the dashboard's trend charts - the same "current state + append-only history" shape Phase 10/11/12 already established), `PlatformJob` (one per background job execution), `PlatformScheduledJob` (one per registered cron job), `PlatformAlert` (active/resolved alert instances), `PlatformBackup` (one per backup archive, with checksum + validation state).
+
+For the full endpoint list, SIEM event catalog, and SOAR trigger wiring, see [README.md's Phase 13 section](README.md#%EF%B8%8F-phase-13-production-hardening--cloud-platform-operations), [API.md](API.md), [MONITORING.md](MONITORING.md), and [CHANGELOG.md](CHANGELOG.md).

@@ -69,6 +69,8 @@ docker compose down          # stop
 docker compose down -v       # stop and wipe the mongo_data volume
 ```
 
+This project deploys to managed cloud services only (Vercel/Render/MongoDB Atlas/Redis Cloud/Cloudinary/ClamAV-on-Render) — see [§2](#2-production-deployment) below. There is no production Docker Compose/Nginx stack; `docker-compose.yml` above is a local-dev convenience only. Redis is optional even locally — the backend runs fine without `REDIS_URL` set, falling back to in-memory rate limiting and in-process background jobs (see [README.md's Phase 13 section](README.md#%EF%B8%8F-phase-13-production-hardening--cloud-platform-operations)).
+
 ### ClamAV (local)
 
 See [§3 — ClamAV Docker](#3-clamav-docker) below; the same container setup works identically for local development — just point `CLAMAV_HOST=127.0.0.1` and `CLAMAV_PORT=3310` at it. Without it running, malware scanning still functions (magic bytes, hashing, VirusTotal, risk classification all work), just with `clamav.status: "unavailable"` on every scan.
@@ -291,6 +293,52 @@ Like the Cloud Security scan, there is no reliable way for this process to detec
 
 ---
 
+## 8. Redis Cloud (Phase 13 — background jobs, caching, rate limiting)
+
+Redis is entirely optional — the backend runs normally without it, falling back to in-memory rate limiting and in-process job execution (see [README.md's Phase 13 section](README.md#%EF%B8%8F-phase-13-production-hardening--cloud-platform-operations)) — but [Redis Cloud](https://redis.io/cloud/) is the recommended managed Redis for this deployment target (Vercel + Render have no persistent local disk/process to run Redis on themselves).
+
+1. Create a free/paid database at [Redis Cloud](https://redis.io/cloud/).
+2. Copy the connection string (including credentials) into `REDIS_URL` in the Render backend service's environment variables — format: `redis://default:<password>@<host>:<port>`.
+3. Redeploy the backend. `GET /api/platform/health` (admin JWT required) should show the `redis` component as `UP`.
+
+If `REDIS_URL` is unset or the connection fails at any point, the backend logs it and falls back to in-memory rate limiting and in-process job execution — no redeploy is required to recover once Redis becomes reachable again (the shared client auto-reconnects).
+
+## 9. Platform Operations, Monitoring & Scaling (Phase 13)
+
+This deployment target has no VPS/host to run Nginx or Docker Compose orchestration on — Vercel and Render each handle their own reverse proxying, TLS termination, and process supervision. Phase 13's Platform Operations layer (`/api/platform/*`, `/platform` dashboard) monitors the managed dependencies instead of local host resources.
+
+### Required environment variables (backend, on Render)
+See [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) for the full list. Phase 13 additions:
+- `REDIS_URL` (optional) — Redis Cloud connection string, see [§8](#8-redis-cloud-phase-13--background-jobs-caching-rate-limiting).
+- `FRONTEND_URL` (optional but recommended) — the deployed Vercel URL (e.g. `https://secureshare.vercel.app`), used by the health engine's "Frontend API" check. Falls back to `WEBAUTHN_ORIGIN` if unset.
+- `LOG_LEVEL` (optional) — winston log verbosity (`error`/`warn`/`info`/`debug`), defaults to `info`.
+
+### Health check endpoints
+- `GET /api/health` — unauthenticated, minimal liveness probe (`{status: "ok"}`) — point Render's own health check at this.
+- `GET /api/platform/health` (admin JWT) — full Cloud Health Engine breakdown: MongoDB Atlas, Redis Cloud, Cloudinary, ClamAV, background queue, backend API, frontend API, and scheduler status, each `Healthy`/`Warning`/`Critical`, plus a weighted overall score.
+- `GET /api/platform/dashboard` (admin JWT) — health + metrics + alerts + queue + recent jobs in one call, backing the `/platform` page.
+
+### Monitoring
+- `GET /api/platform/metrics` and `/metrics/history` — API latency/error-rate, upload/download timing, per-scan-type duration (threat/malware/DLP/compliance/SOAR/cloud/DevSecOps/report generation), authentication success/failure rate, and background queue length.
+- `GET /api/platform/alerts` — currently active alerts (MongoDB/Redis/Cloudinary/ClamAV offline, queue failure, high error rate, slow API, background job failure, health score drop).
+- Structured JSON logs (winston, `backend/utils/logger.js`) are written to stdout — visible directly in Render's log viewer, or pipe them into any external log aggregator; every line carries `requestId`/`correlationId` for tracing a single request end-to-end.
+- See [MONITORING.md](MONITORING.md) for the full monitoring reference.
+
+### Scaling recommendations
+- **Backend (Render)**: stateless aside from its MongoDB Atlas/Redis Cloud/Cloudinary connections — safe to scale horizontally via Render's autoscaling or multiple instances behind Render's own load balancer, as long as every instance shares the same `MONGO_URI`/`REDIS_URL`/Cloudinary credentials. The in-process job-queue fallback only makes sense for a single instance — run with Redis configured (BullMQ) once you scale beyond one backend instance, so scheduled/background jobs aren't duplicated per instance.
+- **Frontend (Vercel)**: scales automatically — no action needed.
+- **MongoDB Atlas**: upgrade the cluster tier (or enable auto-scaling storage) as data volume grows; see [§1](#mongodb) for Network Access hardening.
+- **Redis Cloud**: upgrade plan tier if `queue_failure`/`redis_offline` alerts fire under load; monitor Redis Cloud's own dashboard for memory/eviction pressure.
+- **ClamAV (Render)**: a single instance is normally sufficient (it's stateless per-scan) — if scan volume grows, run a second Render service and round-robin `CLAMAV_HOST` at the application layer, or front it with Render's internal load balancing if available on your plan.
+
+### Troubleshooting
+- **`GET /api/platform/health` shows `redis: DOWN`**: check `REDIS_URL` in Render's environment variables and Redis Cloud's own dashboard for outages; the app continues to function without it (see [§8](#8-redis-cloud-phase-13--background-jobs-caching-rate-limiting)).
+- **`clamav: DOWN`**: verify the ClamAV Render service is running and `CLAMAV_HOST`/`CLAMAV_PORT` point at its correct internal address (see [§4](#4-render-deployment)); the official image can take several minutes to become ready after a cold start while `freshclam` downloads virus definitions.
+- **`frontend_api: UNKNOWN`**: set `FRONTEND_URL` in the backend's Render environment variables to the deployed Vercel URL.
+- **`mongodb: DOWN`**: check MongoDB Atlas Network Access allows Render's egress IPs (or is set to allow all, for simplicity) and that `MONGO_URI` is current.
+
+---
+
 ## Post-Deployment Checklist
 
 - [ ] Frontend loads and `NEXT_PUBLIC_API` correctly points at the deployed backend
@@ -303,5 +351,9 @@ Like the Cloud Security scan, there is no reliable way for this process to detec
 - [ ] `GET /api/devsecops/dashboard` (with an admin JWT) returns a populated overall score after the startup scan runs
 - [ ] MongoDB Atlas Network Access is restricted to known IPs (not left at `0.0.0.0/0`) for production
 - [ ] `JWT_SECRET` and the RSA keypair are unique to this deployment, not copied from a dev `.env`
+- [ ] `GET /api/platform/dashboard` (with an admin JWT) returns a populated health score and no unresolved `DOWN` components
+- [ ] If Redis is configured, `GET /api/platform/health` shows the `redis` component as `UP` (not `DOWN` or stuck on fallback)
+- [ ] A manual backup (`POST /api/platform/backup` with `{"type":"full"}`) succeeds and validates (`POST /api/platform/backup/validate`)
+- [ ] `FRONTEND_URL` is set on the Render backend service, and `GET /api/platform/health` shows `frontend_api: UP` rather than `UNKNOWN`
 
 See [SECURITY_TESTING.md](SECURITY_TESTING.md) for the full test suite to run after any deployment.

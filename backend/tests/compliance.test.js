@@ -29,6 +29,7 @@ import {
   fileIntegrityEvaluator,
   cloudSecurityEvaluator,
   devSecOpsEvaluator,
+  platformOpsEvaluator,
   EVALUATORS
 } from "../services/compliance/controlEvaluators.js";
 import { evaluatePolicyViolations, validatePolicyValue, POLICY_DEFAULTS } from "../services/compliance/policyEvaluator.js";
@@ -139,7 +140,16 @@ test("devSecOpsEvaluator (Phase 12): PASS with no open findings, FAIL on any ope
   assert.ok(critical.score < 100);
 });
 
-test("EVALUATORS registry exposes exactly the 19 documented evaluator keys", () => {
+test("platformOpsEvaluator (Phase 13): PASS with full availability/health/recent backup, degrades otherwise", () => {
+  const healthy = platformOpsEvaluator({ platformOps: { availabilityPct: 100, healthScore: 100, hoursSinceLastBackup: 2 } });
+  assert.equal(healthy.status, "PASS");
+
+  const degraded = platformOpsEvaluator({ platformOps: { availabilityPct: 50, healthScore: 40, hoursSinceLastBackup: null } });
+  assert.notEqual(degraded.status, "PASS");
+  assert.ok(degraded.score < healthy.score);
+});
+
+test("EVALUATORS registry exposes exactly the 20 documented evaluator keys", () => {
   const expectedKeys = [
     "encryptionEvaluator", "mfaEvaluator", "threatDetectionEvaluator", "malwareProtectionEvaluator",
     "dlpEvaluator", "zeroTrustEvaluator", "auditLoggingEvaluator", "sessionManagementEvaluator",
@@ -149,7 +159,9 @@ test("EVALUATORS registry exposes exactly the 19 documented evaluator keys", () 
     // Phase 11 (CSPM/ASM)
     "cloudSecurityEvaluator",
     // Phase 12 (DevSecOps/Supply Chain)
-    "devSecOpsEvaluator"
+    "devSecOpsEvaluator",
+    // Phase 13 (Platform Operations)
+    "platformOpsEvaluator"
   ];
   assert.deepEqual(Object.keys(EVALUATORS).sort(), expectedKeys.sort());
 });

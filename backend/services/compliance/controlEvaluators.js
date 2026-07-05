@@ -278,6 +278,20 @@ function devSecOpsEvaluator_impl(context) {
   return { status, score, details: { openCritical, openHigh, totalOpen }, recommendations };
 }
 
+/** Phase 13 (Platform Operations) PART 17: feeds platform availability/operational-resilience
+ *  evidence (uptime, health score, backup recency) into availability/monitoring/operational
+ *  resilience controls - mirrors cloudSecurityEvaluator_impl/devSecOpsEvaluator_impl's shape. */
+function platformOpsEvaluator_impl(context) {
+  const { availabilityPct = 100, healthScore = 100, hoursSinceLastBackup = null } = context.platformOps || {};
+  const backupBonus = hoursSinceLastBackup === null ? 0 : hoursSinceLastBackup <= 24 ? 10 : hoursSinceLastBackup <= 72 ? 5 : 0;
+  const score = clampScore(availabilityPct * 0.5 + healthScore * 0.4 + backupBonus);
+  const status = verdictFromScore(score, { partialAt: 70, passAt: 90 });
+  const recommendations = [];
+  if (availabilityPct < 99) recommendations.push("Investigate recent platform health incidents impacting availability.");
+  if (hoursSinceLastBackup === null || hoursSinceLastBackup > 24) recommendations.push("Run a database/audit backup at least once every 24 hours.");
+  return { status, score, details: { availabilityPct, healthScore, hoursSinceLastBackup }, recommendations };
+}
+
 export const encryptionEvaluator = withEvaluatorMeta(encryptionEvaluator_impl);
 export const mfaEvaluator = withEvaluatorMeta(mfaEvaluator_impl);
 export const threatDetectionEvaluator = withEvaluatorMeta(threatDetectionEvaluator_impl);
@@ -297,6 +311,7 @@ export const digitalSignatureEvaluator = withEvaluatorMeta(digitalSignatureEvalu
 export const fileIntegrityEvaluator = withEvaluatorMeta(fileIntegrityEvaluator_impl);
 export const cloudSecurityEvaluator = withEvaluatorMeta(cloudSecurityEvaluator_impl);
 export const devSecOpsEvaluator = withEvaluatorMeta(devSecOpsEvaluator_impl);
+export const platformOpsEvaluator = withEvaluatorMeta(platformOpsEvaluator_impl);
 
 export const EVALUATORS = {
   encryptionEvaluator,
@@ -317,5 +332,6 @@ export const EVALUATORS = {
   digitalSignatureEvaluator,
   fileIntegrityEvaluator,
   cloudSecurityEvaluator,
-  devSecOpsEvaluator
+  devSecOpsEvaluator,
+  platformOpsEvaluator
 };

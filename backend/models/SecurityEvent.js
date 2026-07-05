@@ -40,7 +40,11 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 12: DevSecOps / Software Supply Chain Security
       "dependency_vulnerability", "secret_found", "sbom_generated", "sast_finding",
       "container_vulnerability", "pipeline_failed", "pipeline_blocked", "high_risk_repository",
-      "iac_misconfiguration", "devsecops_scan", "devsecops_risk_updated"
+      "iac_misconfiguration", "devsecops_scan", "devsecops_risk_updated",
+      // Phase 13: Production Hardening & Cloud Platform Operations
+      "platform_health_changed", "mongodb_offline", "redis_offline", "clamav_offline",
+      "cloudinary_failure", "queue_failure", "high_api_latency", "background_job_failed",
+      "backup_completed", "backup_failed", "platform_report_generated"
     ]
   },
   message: String,
@@ -88,13 +92,17 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 12: DevSecOps / Software Supply Chain Security
       "DEPENDENCY_VULNERABILITY", "SECRET_FOUND", "SBOM_GENERATED", "SAST_FINDING",
       "CONTAINER_VULNERABILITY", "PIPELINE_FAILED", "PIPELINE_BLOCKED", "HIGH_RISK_REPOSITORY",
-      "IAC_MISCONFIGURATION", "DEVSECOPS_SCAN", "DEVSECOPS_RISK_UPDATED"
+      "IAC_MISCONFIGURATION", "DEVSECOPS_SCAN", "DEVSECOPS_RISK_UPDATED",
+      // Phase 13: Production Hardening & Cloud Platform Operations
+      "PLATFORM_HEALTH_CHANGED", "MONGODB_OFFLINE", "REDIS_OFFLINE", "CLAMAV_OFFLINE",
+      "CLOUDINARY_FAILURE", "QUEUE_FAILURE", "HIGH_API_LATENCY", "BACKGROUND_JOB_FAILED",
+      "BACKUP_COMPLETED", "BACKUP_FAILED", "PLATFORM_REPORT_GENERATED"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

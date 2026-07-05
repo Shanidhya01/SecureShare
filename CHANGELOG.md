@@ -6,6 +6,38 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 13 — Production Hardening & Cloud Platform Operations
+**2026-07-05**
+
+A Cloud Health Engine and platform-operations layer targeting this project's actual deployment shape - Vercel (frontend), Render (backend + ClamAV in Docker), MongoDB Atlas, Redis Cloud, and Cloudinary - with no VPS/self-hosted infrastructure: Redis-backed caching/queueing with automatic in-process fallback, a BullMQ background job queue, a health engine over managed dependencies only, structured logging/metrics, an alert engine, and a non-destructive backup manager. No prior phase's code was rewritten; every existing scan orchestrator (Cloud/DevSecOps/Compliance) is reused as-is by the new queue and scheduler. An initial pass within this same phase added VPS-style infrastructure (Nginx, a multi-service Docker Compose stack, local CPU/disk/memory monitoring) that was removed once the actual deployment target was clarified - see "Changed" below.
+
+### Added
+- `backend/models/PlatformHealthSnapshot.js`, `PlatformMetricSnapshot.js`, `PlatformJob.js`, `PlatformScheduledJob.js`, `PlatformAlert.js`, `PlatformBackup.js`
+- `backend/services/platform/healthChecker.js` - checks MongoDB Atlas, Redis Cloud, ClamAV (Render), Cloudinary, the job queue, this backend's own process, the deployed Vercel frontend, and the scheduler's run history, and computes a weighted overall health score/status (`HEALTHY`/`WARNING`/`CRITICAL`) - deliberately no local CPU/disk/memory check, since this deployment has no host VM
+- `backend/services/platform/metricsCollector.js` - in-memory ring buffer of API latency/error-rate/upload/download timings, per-scan-type duration (threat/malware/DLP/compliance/SOAR/cloud/DevSecOps/report-generation), authentication success/failure rate (reusing Phase 9's existing `login`/`login_failed` events), and scan-activity counts, snapshotted periodically for history
+- `backend/services/platform/alertEngine.js` - rule-based alerting (`MONGODB_OFFLINE`, `REDIS_OFFLINE`, `CLOUDINARY_FAILURE`, `CLAMAV_OFFLINE`, `QUEUE_FAILURE`, `HIGH_ERROR_RATE`, `SLOW_API`, `BACKGROUND_JOB_FAILURE`, `HEALTH_SCORE_DROP`), each rule emitting a SIEM event that auto-triggers SOAR
+- `backend/services/platform/queue.js` - BullMQ-backed background job queue via Redis Cloud (`threat-scan`, `malware-scan`, `cloud-scan`, `compliance-scan`, `devsecops-scan`, `report-generation`, `notification`, `email`) with an in-process fallback when Redis is unavailable; every job's status/duration/retry count/logs are persisted regardless of mode
+- `backend/services/platform/scheduler.js` - wraps every `node-cron` schedule (including the pre-existing Phase 10/11/12 daily scans) with last/next run, duration, status, and failure tracking
+- `backend/services/platform/backupManager.js` - database/configuration/metadata/audit ZIP backups with SHA-256 checksum validation; no destructive restore is implemented
+- `backend/services/platform/platformReportGenerator.js` - Health/Availability/Performance/Queue/Infrastructure reports in CSV/JSON/PDF
+- `backend/services/platform/platformOrchestrator.js` (`runPlatformScan`) - the single entry point chaining health + metrics + alerts, mirroring `devSecOpsOrchestrator.js`
+- `backend/utils/logger.js`, `backend/middleware/requestContext.middleware.js`, `backend/middleware/metrics.middleware.js`, `backend/middleware/redisClient.js` - structured JSON logging (winston) with request/correlation IDs via `AsyncLocalStorage`, and a shared Redis client that every consumer (rate limiting, queue, health checks) degrades gracefully without
+- `backend/controllers/platform.controller.js`, `backend/routes/platform.routes.js` (`/api/platform/*`, admin-only) - dashboard, health, metrics, alerts, jobs, scheduler, backup, report, and export (`/export/pdf|csv|json`) endpoints
+- A new `platformOpsEvaluator` in `services/compliance/controlEvaluators.js`, seeded as one control under ISO 27001, SOC 2, NIST CSF, and PCI DSS, feeding platform availability/health-score/backup-recency into those frameworks' availability and operational-resilience controls
+- 11 new SIEM event types (`platform_health_changed`, `mongodb_offline`, `redis_offline`, `clamav_offline`, `cloudinary_failure`, `queue_failure`, `high_api_latency`, `background_job_failed`, `backup_completed`, `backup_failed`, `platform_report_generated`) and a new `PLATFORM` category, added additively to `SecurityEvent.js` - deliberately distinct from the `AUTOMATION` category so these events can still trigger SOAR playbooks
+- `/platform` dashboard (Platform Health/MongoDB/Redis/Cloudinary/ClamAV cards, average response time, background queue, alerts, availability, plus 8 Recharts visualizations) plus `/scheduler`, `/backups`, and `/reports` subpages, with a new "Platform" nav entry
+- A health/metrics/alert scan every 5 minutes and a nightly full backup at 02:00, both registered through the new scheduler
+- `backend/tests/platform.test.js` - unit tests for the SIEM catalog additions, alert rule coverage/category isolation, the queue's declared queue names, scan-duration/auth/upload-download metrics, and the report builders
+- `MONITORING.md` - the full monitoring reference (health, metrics, alerts, queue, Redis, Cloudinary, ClamAV)
+
+### Changed
+- `backend/server.js` - mounts `/api/platform`, initializes the shared Redis client and BullMQ queues (non-fatal if unset/unreachable), registers every recurring scan (Phase 10/11/12's daily scans plus the new Phase 13 ones) through the scheduler instead of calling `cron.schedule` directly, times each scheduled scan via `recordScanDuration`, adds request-context and metrics middleware globally, and reads `PORT` from the environment instead of a hardcoded `5000`
+- `.env.example` - new Phase 13 section (`REDIS_URL`, `FRONTEND_URL`, `LOG_LEVEL`)
+- `DEPLOYMENT.md` - added Redis Cloud provisioning and a Platform Operations/Monitoring/Scaling section specific to Vercel + Render + Atlas + Redis Cloud + Cloudinary; removed an initial VPS-oriented Docker Compose + Nginx production-stack section once the deployment target was clarified
+- Reverted, as out of scope for this deployment target: `docker-compose.yml` (back to its original local-dev-only `backend`+`mongo` shape), `frontend/next.config.ts` (removed `output: "standalone"`); deleted `nginx/` and `frontend/Dockerfile` entirely (no reverse proxy or containerized frontend in this deployment)
+
+---
+
 ## Phase 12 — Enterprise DevSecOps & Software Supply Chain Security
 **2026-07-04**
 

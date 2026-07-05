@@ -8,6 +8,9 @@ node_modules/
 # Uploads (encrypted files)
 uploads/
 
+# Phase 13: platform backups (database/config/metadata/audit archives)
+backend/backups/
+
 # Logs
 logs/
 npm-debug.log*
