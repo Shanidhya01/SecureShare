@@ -11,6 +11,8 @@ import * as creditCard from "./creditCard.js";
 import * as aadhaar from "./aadhaar.js";
 import * as pan from "./pan.js";
 import * as passport from "./passport.js";
+import * as iban from "./iban.js";
+import * as swift from "./swift.js";
 import * as awsAccessKey from "./awsAccessKey.js";
 import * as awsSecretKey from "./awsSecretKey.js";
 import * as githubToken from "./githubToken.js";
@@ -30,6 +32,8 @@ export const DETECTORS = [
   aadhaar,
   pan,
   passport,
+  iban,
+  swift,
   awsAccessKey,
   awsSecretKey,
   githubToken,

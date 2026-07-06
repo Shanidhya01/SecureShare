@@ -30,6 +30,24 @@ export const scanFile = async (req, res) => {
       ...result
     });
 
+    // Part 8 (SIEM Integration): richer event metadata - pattern, confidence, reason, context,
+    // decision, file name, uploader, timestamp - sourced straight from the Part 6 risk report so
+    // the SIEM/SOAR pipeline sees the same confidence reasoning a human reviewer would.
+    const siemMetadata = {
+      matchedPatterns: scan.matchedPatterns,
+      severity: scan.severity,
+      fileName: scan.originalFilename,
+      uploader: req.user.id,
+      timestamp: scan.createdAt,
+      riskReport: (scan.riskReport || []).map((r) => ({
+        pattern: r.pattern,
+        confidence: r.confidence,
+        reasons: r.reasons,
+        context: r.context,
+        decision: r.decision
+      }))
+    };
+
     if (scan.decision === "block") {
       logSecurityEvent({
         owner: req.user.id,
@@ -37,7 +55,7 @@ export const scanFile = async (req, res) => {
         message: `Upload blocked: sensitive data detected (${scan.matchedPatterns.join(", ") || scan.severity + " risk"})`,
         filename: scan.originalFilename,
         ip: req.headers["x-client-ip"] || req.ip,
-        metadata: { matchedPatterns: scan.matchedPatterns, severity: scan.severity }
+        metadata: siemMetadata
       }).catch((e) => console.error("Failed to record security event:", e));
     } else if (scan.findings.length > 0) {
       logSecurityEvent({
@@ -46,7 +64,7 @@ export const scanFile = async (req, res) => {
         message: `Sensitive data detected in "${scan.originalFilename}": ${scan.matchedPatterns.join(", ")}`,
         filename: scan.originalFilename,
         ip: req.headers["x-client-ip"] || req.ip,
-        metadata: { matchedPatterns: scan.matchedPatterns, severity: scan.severity }
+        metadata: siemMetadata
       }).catch((e) => console.error("Failed to record security event:", e));
     }
 
@@ -60,7 +78,8 @@ export const scanFile = async (req, res) => {
       severity: scan.severity,
       decision: scan.decision,
       findings: scan.findings,
-      matchedPatterns: scan.matchedPatterns
+      matchedPatterns: scan.matchedPatterns,
+      riskReport: scan.riskReport || []
     });
   } catch (err) {
     console.error("DLP scan error:", err);

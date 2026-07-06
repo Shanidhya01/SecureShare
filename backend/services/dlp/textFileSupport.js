@@ -6,6 +6,28 @@
  * backend/utils/magicBytes.js.
  */
 import { getFileExtension } from "../riskEngine.js";
+import { detectFileType } from "../../utils/magicBytes.js";
+
+// Known binary container formats whose *headers* happen to be mostly printable ASCII (PDF's
+// object/xref structure, RTF's control-word preamble) or whose printable ratio can slip past the
+// coarse first-1024-byte sample below (ZIP-based Office docs). Without this hard exclusion,
+// looksLikeText() misclassifies them as scannable text, and the DLP detectors then regex/Luhn-scan
+// the raw compressed/binary bytes - e.g. a PDF's zero-padded xref offset table ("0000000015 00000
+// n") is a digit run that can accidentally pass the credit-card regex *and* Luhn checksum, with no
+// real surrounding context (the actual document text is inside compressed streams, not in the
+// decoded byte soup), producing dozens of spurious HIGH-confidence "credit card" findings on a
+// harmless receipt/invoice PDF. These formats have no text-extraction pipeline here, so they must
+// be treated the same as images/executables: skipped gracefully, never regex-scanned.
+const BINARY_CONTAINER_MIMES = new Set([
+  "application/pdf",
+  "application/zip", // also docx/xlsx/pptx/jar/apk - all ZIP-based
+  "application/x-rar-compressed",
+  "application/x-7z-compressed",
+  "application/gzip",
+  "application/x-msdownload",
+  "application/x-elf",
+  "text/rtf"
+]);
 
 const TEXT_EXTENSIONS = new Set([
   ".txt", ".csv", ".tsv", ".log", ".md", ".markdown", ".json", ".yml", ".yaml", ".xml", ".ini",
@@ -53,6 +75,14 @@ export function extractScannableText(buffer, { originalFilename, claimedMimeType
   const extension = getFileExtension(originalFilename);
   const extensionSaysText = TEXT_EXTENSIONS.has(extension);
   const mimeSaysText = isTextMime(claimedMimeType) || isTextMime(detectedMimeType);
+
+  // Magic-byte identification wins over the coarse printable-ratio heuristic below: a file whose
+  // actual content is a known binary container (PDF, ZIP/Office, RAR, 7z, gzip, executables, RTF)
+  // is never scannable text, regardless of what its first 1024 bytes look like.
+  const { mime: sniffedMime } = detectFileType(buffer);
+  if (BINARY_CONTAINER_MIMES.has(sniffedMime)) {
+    return { supported: false, reason: "binary_or_unsupported_type" };
+  }
 
   if (!extensionSaysText && !mimeSaysText && !looksLikeText(buffer)) {
     return { supported: false, reason: "binary_or_unsupported_type" };

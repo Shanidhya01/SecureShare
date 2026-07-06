@@ -55,3 +55,10 @@ export const decisionTone: Record<string, StatusTone> = {
   require_approval: "warning",
   block: "danger",
 };
+
+// Confidence-based DLP (Part 4): LOW/MEDIUM/HIGH risk level badge tones.
+export const confidenceLevelTone: Record<string, StatusTone> = {
+  LOW: "success",
+  MEDIUM: "warning",
+  HIGH: "danger",
+};

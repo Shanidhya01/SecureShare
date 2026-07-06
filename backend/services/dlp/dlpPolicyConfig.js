@@ -42,7 +42,9 @@ export const DETECTOR_ACTION_OVERRIDES = {
   passport: "warn",
   phone: "warn",
   email: "allow",
-  certificate: "allow"
+  certificate: "allow",
+  iban: "require_approval",
+  swift_bic: "warn"
 };
 
 const ACTION_PRIORITY = { block: 3, require_approval: 2, warn: 1, allow: 0 };
@@ -53,7 +55,12 @@ function actionForDetector(detectorId, severity) {
 }
 
 /**
- * @param {Array<{detectorId: string, severity: string}>} findings
+ * @param {Array<{detectorId: string, severity: string, decisionHint?: string}>} findings - a
+ *   finding may carry a `decisionHint` (set by dlpEngine.js when a detector's confidence-based
+ *   analysis - see confidenceEngine.js - already produced a decision for this specific match, e.g.
+ *   a LOW-confidence credit-card candidate that turned out to be a Ride ID). When present, it
+ *   takes priority over the blanket per-detector/severity policy below, since it reflects an
+ *   actual per-instance risk assessment rather than "this detector type is always dangerous".
  * @param {object} [config] - override policy config, defaults to the module-level exports above
  * @returns {{decision: string, policySnapshot: object}}
  */
@@ -63,7 +70,7 @@ export function resolveDecision(findings, config = {}) {
 
   let decision = "allow";
   for (const finding of findings) {
-    const action = overrides[finding.detectorId] || severityAction[finding.severity] || "allow";
+    const action = finding.decisionHint || overrides[finding.detectorId] || severityAction[finding.severity] || "allow";
     if (ACTION_PRIORITY[action] > ACTION_PRIORITY[decision]) decision = action;
   }
 

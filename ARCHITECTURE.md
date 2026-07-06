@@ -2,6 +2,61 @@
 
 This file supplements [README.md](README.md)'s per-phase architecture diagrams with a short, standalone reference for the newest subsystem. See README's [System Architecture](README.md#-system-architecture) section for the overall request-flow diagrams across Phases 1-10.
 
+## Phase 5.1: Confidence-Based DLP Engine
+
+Extends Phase 5's regex-only DLP detectors with a scoring layer that reduces false positives (a Rapido ride receipt's "Ride ID" being auto-blocked as a credit card) without touching the existing detector registry, policy config shape, or API contracts.
+
+```
+                     detector.detect(text)              (unchanged, all 19 detectors)
+                              │
+                     detector.detectWithConfidence(text)  (opt-in, currently: credit_card)
+                              │
+                              ▼
+                    ┌──────────────────────┐
+                    │ confidenceEngine.js  │
+                    └──────────┬───────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+  Regex match (+40)      Luhn validation (+40)   Context analysis (+20 / override)
+                                                  ┌─────────────┬─────────────┐
+                                                  ▼             ▼
+                                          card keywords   non-card ID keywords
+                                          (Visa, CVV,      (Ride ID, Invoice No,
+                                           Cardholder...)   Booking ID...) → force
+                                                            confidence toward 0
+                               │
+                               ▼
+                     Confidence Score (0-100)
+                               │
+                               ▼
+              LOW (0-40) / MEDIUM (41-70) / HIGH (71-100)
+                               │
+                               ▼
+                decisionForConfidenceLevel(level)
+             Allow+Log / Allow+Warn / Block+Log+SIEM
+                               │
+                               ▼
+              finding.decisionHint  ──▶  dlpPolicyConfig.resolveDecision()
+       (per-instance decision takes priority over the blanket per-detector
+        policy, e.g. credit_card's normal hard-block override)
+                               │
+                               ▼
+                    runDLPScan() aggregates every
+                    finding into a uniform riskReport
+                    { pattern, confidence, confidenceLevel,
+                      reasons, matchedText, context, decision }
+                               │
+                               ▼
+        DLPScan document  ──▶  DLP Center UI  +  SIEM event metadata
+```
+
+**Backward compatibility**: `detect()` on every detector (including `credit_card`) is untouched and still returns a plain `string[]` - existing callers/tests (`backend/tests/dlp.test.js`) are unaffected. `detectWithConfidence()` is an additional, optional export; `dlpEngine.js` prefers it when present and falls back to `detect()` otherwise, so adding confidence scoring to another detector later is opt-in, not a breaking change.
+
+**New detectors**: `iban` and `swift_bic` were added to close the Part 9 test matrix (IBAN/SWIFT must be "Detected"). `swift_bic` requires a nearby "SWIFT"/"BIC" keyword before it fires at all, since the bare 8/11-character alphanumeric shape is otherwise indistinguishable from ordinary uppercase text - the same context-analysis idea as the credit card scorer, applied as a hard gate instead of a score adjustment.
+
+For the full weighting/threshold tables and code entry points, see [README.md's Confidence-Based DLP Engine section](README.md#confidence-based-dlp-engine) and [CHANGELOG.md](CHANGELOG.md).
+
 ## Phase 11: Cloud Security Posture Management & Attack Surface Management
 
 SecureShare is a single-tenant, self-hosted application with no multi-cloud account to enumerate. Phase 11's "cloud" scanning is therefore self-referential: it discovers and scores SecureShare's own Express/Next.js deployment, not external cloud resources.

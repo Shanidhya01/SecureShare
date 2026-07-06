@@ -33,10 +33,23 @@ const dlpScanSchema = new mongoose.Schema(
         category: String,
         severity: { type: String, enum: ["Low", "Medium", "High", "Critical"] },
         count: Number,
-        samples: { type: [String], default: [] } // masked previews only, never raw values
+        samples: { type: [String], default: [] }, // masked previews only, never raw values
+
+        // Confidence-based DLP (Part 1-6): populated for every finding, either from a detector's
+        // detectWithConfidence() scoring (e.g. credit_card) or, for plain regex detectors, a
+        // severity-derived stand-in - see services/dlp/dlpEngine.js's runDLPScan.
+        confidence: { type: Number, min: 0, max: 100 },
+        confidenceLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH"] },
+        reasons: { type: [String], default: [] }, // human-readable "why this score" explanations
+        context: { type: String, default: null }, // masked-safe surrounding text snippet, or null
+        decisionHint: String // per-finding decision (e.g. "allow" for a false-positive Ride ID)
       }
     ],
     matchedPatterns: { type: [String], default: [] }, // detector ids that matched, for quick filtering
+
+    // Part 6 risk report: one row per finding, in the exact shape the DLP Center UI/SIEM events
+    // consume (pattern name, confidence, reasons, masked matched text, context, decision).
+    riskReport: { type: [mongoose.Schema.Types.Mixed], default: [] },
 
     severity: { type: String, enum: ["None", "Low", "Medium", "High", "Critical"], default: "None" },
 

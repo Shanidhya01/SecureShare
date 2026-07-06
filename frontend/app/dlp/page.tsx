@@ -8,7 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { motion } from "framer-motion";
 import PageHeader from "@/components/design/PageHeader";
 import StatCard from "@/components/design/StatCard";
-import StatusBadge, { severityTone, decisionTone } from "@/components/design/StatusBadge";
+import StatusBadge, { severityTone, decisionTone, confidenceLevelTone } from "@/components/design/StatusBadge";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
@@ -18,7 +18,35 @@ import { staggerContainer } from "@/lib/motion";
 type Severity = "None" | "Low" | "Medium" | "High" | "Critical";
 type Decision = "allow" | "warn" | "require_approval" | "block";
 
-type Finding = { detectorId: string; label: string; category: string; severity: Severity; count: number; samples: string[] };
+type ConfidenceLevel = "LOW" | "MEDIUM" | "HIGH";
+
+type Finding = {
+  detectorId: string;
+  label: string;
+  category: string;
+  severity: Severity;
+  count: number;
+  samples: string[];
+  // Confidence-based DLP (Part 1-6): present on every finding - either a real per-instance score
+  // (e.g. credit_card, via Luhn + context analysis) or a severity-derived stand-in for plain
+  // regex detectors. See backend/services/dlp/dlpEngine.js.
+  confidence?: number;
+  confidenceLevel?: ConfidenceLevel;
+  reasons?: string[];
+  context?: string | null;
+  decisionHint?: Decision;
+};
+
+type RiskReportEntry = {
+  pattern: string;
+  detectorId: string;
+  confidence: number;
+  confidenceLevel: ConfidenceLevel;
+  reasons: string[];
+  matchedText: string[];
+  context: string | null;
+  decision: Decision;
+};
 
 type ScanEntry = {
   _id: string;
@@ -29,6 +57,7 @@ type ScanEntry = {
   truncated?: boolean;
   findings: Finding[];
   matchedPatterns: string[];
+  riskReport?: RiskReportEntry[];
   severity: Severity;
   decision: Decision;
   scanStatus: string;
@@ -159,12 +188,19 @@ export default function DLPCenterPage() {
     { key: "size", header: "Size", render: (s) => formatBytes(s.fileSizeBytes) },
     {
       key: "patterns",
-      header: "Matched Patterns",
-      render: (s) => (
-        <span className="text-xs text-muted-foreground max-w-[220px] truncate inline-block">
-          {!s.supported ? "skipped (binary/unsupported)" : s.matchedPatterns.length > 0 ? s.matchedPatterns.join(", ") : "none"}
-        </span>
-      ),
+      header: "Pattern / Confidence",
+      render: (s) => {
+        if (!s.supported) return <span className="text-xs text-muted-foreground">skipped (binary/unsupported)</span>;
+        if (s.findings.length === 0) return <span className="text-xs text-muted-foreground">none</span>;
+        return (
+          <span
+            className="text-xs text-muted-foreground max-w-[240px] truncate inline-block"
+            title={s.findings.map((f) => `${f.label}: ${f.confidence ?? "?"}% (${f.confidenceLevel ?? f.severity})`).join(", ")}
+          >
+            {s.findings.map((f) => `${f.label}${typeof f.confidence === "number" ? ` (${f.confidence}%)` : ""}`).join(", ")}
+          </span>
+        );
+      },
     },
     { key: "severity", header: "Severity", render: (s) => <StatusBadge label={s.severity} tone={severityTone[s.severity] ?? "neutral"} /> },
     { key: "decision", header: "Decision", render: (s) => <StatusBadge label={decisionLabel[s.decision]} tone={decisionTone[s.decision] ?? "neutral"} /> },
@@ -314,11 +350,24 @@ export default function DLPCenterPage() {
                         <StatusBadge label={decisionLabel[s.decision]} tone={decisionTone[s.decision] ?? "neutral"} />
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-2">
                       {s.findings.map((f) => (
-                        <span key={f.detectorId} title={f.samples.join(", ")} className="text-[10px] font-medium rounded-full px-2 py-0.5 bg-muted text-muted-foreground ring-1 ring-border">
-                          {f.label} × {f.count}
-                        </span>
+                        <div
+                          key={f.detectorId}
+                          title={[f.samples.join(", "), ...(f.reasons || [])].filter(Boolean).join(" | ")}
+                          className="flex items-center gap-1.5 text-[10px] font-medium rounded-full pl-2 pr-1.5 py-0.5 bg-muted text-muted-foreground ring-1 ring-border"
+                        >
+                          <span>{f.label} × {f.count}</span>
+                          {typeof f.confidence === "number" && (
+                            <span className="text-muted-foreground/80">{f.confidence}%</span>
+                          )}
+                          {f.confidenceLevel && (
+                            <StatusBadge label={f.confidenceLevel} tone={confidenceLevelTone[f.confidenceLevel] ?? "neutral"} />
+                          )}
+                          {f.decisionHint && (
+                            <StatusBadge label={decisionLabel[f.decisionHint]} tone={decisionTone[f.decisionHint] ?? "neutral"} />
+                          )}
+                        </div>
                       ))}
                     </div>
                   </div>

@@ -6,6 +6,39 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 16 — Confidence-Based DLP Engine
+**2026-07-06**
+
+Phase 5's DLP detectors are regex-only: a candidate that matches a credit-card-shaped pattern is either Luhn-valid (kept) or not (discarded), with no notion of surrounding context. That meant a Rapido ride receipt's "Ride ID: 4111 1111 1111 1111" or an invoice's "Transaction ID" next to a long digit run was indistinguishable from an actual card number and got auto-blocked. This phase adds a confidence-scoring layer on top of the existing regex/Luhn detection - extending Phase 5, not replacing it - so a per-instance score (regex match + Luhn + surrounding keywords) decides Allow/Warn/Block instead of a blanket "this detector type always blocks" rule.
+
+### Added
+- `backend/services/dlp/confidenceEngine.js` - `scoreCreditCardCandidate()` (weighted 0-100 scoring: +40 regex match, +40 Luhn pass, +20 nearby card keywords, forced toward 0 when a non-card identifier keyword like "Ride ID"/"Invoice Number"/"Booking ID"/"Transaction ID" is nearby instead), `confidenceLevelForScore()` (LOW 0-40 / MEDIUM 41-70 / HIGH 71-100), and `decisionForConfidenceLevel()` (LOW → allow+log, MEDIUM → allow+warn, HIGH → block+log+SIEM event).
+- `creditCard.js`'s new `detectWithConfidence(text)` export - returns every regex candidate (Luhn-valid or not) with its score, level, reasons, context, and decision, instead of only the Luhn-valid subset. The original `detect()` export is untouched for backward compatibility.
+- `backend/services/dlp/detectors/iban.js` and `swift.js` - two new detectors (IBAN, SWIFT/BIC) registered in `detectors/index.js`. `swift_bic` requires a nearby "SWIFT"/"BIC" keyword to fire at all, since its bare pattern is otherwise a generic 8/11-character uppercase string.
+- `backend/tests/dlpConfidence.test.js` - 14 new tests: real card (with context) blocked, Luhn-failing random digits allowed, Rapido-style Ride ID/Invoice Number/Booking ID receipts allowed, `detectWithConfidence`'s false-positive flagging, `detect()` backward compatibility, PAN/Aadhaar/Passport/IBAN/SWIFT detection, and risk-report shape.
+- Risk report (Part 6): `runDLPScan()` now returns a `riskReport` array (one entry per finding: `pattern`, `confidence`, `confidenceLevel`, `reasons`, masked `matchedText`, `context`, `decision`), persisted on `DLPScan.riskReport` and returned from `POST /api/dlp/scan`.
+
+### Changed
+- `dlpPolicyConfig.js`'s `resolveDecision()` now honors a per-finding `decisionHint` (set when a detector's confidence engine already produced a decision for that specific match) ahead of the blanket per-detector/severity policy - so `credit_card`'s normal hard-block override no longer applies unconditionally; a LOW-confidence candidate is allowed even though the detector type is still "block" by default for genuine matches.
+- `dlpPolicyConfig.js`'s `DETECTOR_ACTION_OVERRIDES` gained `iban: "require_approval"` and `swift_bic: "warn"`.
+- `dlpEngine.js`'s `runDLPScan()` builds a uniform finding shape for every detector (confidence-scored or not) - legacy regex detectors get a severity-derived `confidence`/`confidenceLevel` stand-in (`Critical`/`High` → HIGH, `Medium` → MEDIUM, `Low` → LOW) purely so the DLP Center UI and SIEM events have one consistent shape to render, without changing those detectors' actual behavior.
+- `dlp.controller.js`'s `scanFile` now attaches a richer SIEM event `metadata` payload (full `riskReport`, file name, uploader id, timestamp) instead of just `matchedPatterns`/`severity`, and returns `riskReport` alongside the existing response fields.
+- `frontend/app/dlp/page.tsx` - the "Matched Patterns" table column and finding chips now show per-finding confidence %, LOW/MEDIUM/HIGH badge, and decision, not just the detector label.
+- `frontend/app/upload/page.tsx` - the block error message and the "require_approval" modal now surface confidence level/score and the top reason for each finding.
+- `frontend/components/design/StatusBadge.tsx` - added `confidenceLevelTone` (LOW → success, MEDIUM → warning, HIGH → danger) alongside the existing `severityTone`/`decisionTone` maps.
+
+### Fixed
+- **PDF (and other binary-container) uploads were misclassified as scannable text**, letting the DLP engine regex/Luhn-scan raw compressed PDF bytes and produce spurious HIGH-confidence "credit card" findings on harmless receipts/invoices (e.g. a PDF's zero-padded xref offset table, `"0000000015 00000 n"`, is a digit run that can accidentally pass both the credit-card regex and the Luhn checksum, with no real surrounding context since the actual document text lives in compressed streams, not the raw byte soup). Root cause: `textFileSupport.js`'s `looksLikeText()` fallback only samples the first 1024 bytes for a printable-byte ratio, and a PDF's early object/xref structure is almost always printable ASCII even though the file as a whole is binary - so PDFs (and ZIP-based Office docs, RAR/7z archives, executables) slipped past the extension/MIME allowlist *and* the printable-ratio check. Fixed by having `extractScannableText()` sniff magic bytes via the existing `utils/magicBytes.js` (`detectFileType()`, already used by Phase 4's risk engine) and hard-exclude known binary containers before ever falling back to the printable-ratio heuristic - the same "skip gracefully" treatment already given to images. This was a pre-existing bug in Phase 5's text/binary classification, not something introduced by the confidence engine above - the confidence engine was scoring exactly what it was given (regex+Luhn match, no context) correctly; it just should never have seen PDF byte soup as "text" in the first place.
+- `backend/tests/dlpBinaryContainers.test.js` - 4 new regression tests using `pdfkit`-generated PDF buffers: a Rapido-style PDF receipt and an invoice PDF are both skipped as unsupported (not scanned, not blocked), and magic-byte sniffing wins even when the claimed MIME type is spoofed as `text/plain`.
+
+### Verified, no changes needed
+- `backend/services/dlp/detectors/index.js`'s registry pattern (`{ id, label, category, severity, detect(text) }`) is unchanged - `detectWithConfidence` is an additional, optional export that `dlpEngine.js` prefers when present and falls back from otherwise; the 15 detectors that don't implement it keep working exactly as before.
+- `backend/tests/dlp.test.js` (Phase 5's original suite) passes unmodified - `creditCard.detect()`'s Luhn valid/invalid behavior, `resolveDecision`'s block-escalation, and `runDLPScan`'s binary-skip/AWS-key-block/clean-file-allow cases are all untouched.
+- API routes (`backend/routes/dlp.routes.js`), the `DLPScan` document's existing fields, and the acknowledge/stats/policy endpoints are unchanged - only additive fields (`riskReport`, per-finding `confidence`/`confidenceLevel`/`reasons`/`context`/`decisionHint`) were introduced.
+- The confidence-scoring logic itself (`confidenceEngine.js`, `dlpPolicyConfig.js`'s `decisionHint` handling) needed no changes - once PDFs stop being fed in as fake "text", the scorer's LOW/MEDIUM/HIGH → allow/warn/block mapping behaves exactly as designed for genuine text-based uploads.
+
+---
+
 ## Phase 15 — Frontend RBAC & Role-Aware UI
 **2026-07-06**
 

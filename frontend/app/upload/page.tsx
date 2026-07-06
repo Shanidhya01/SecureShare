@@ -30,12 +30,22 @@ type ThreatScanResult = {
   clamav?: { status: string };
 };
 
+type DLPRiskReportEntry = {
+  pattern: string;
+  confidence: number;
+  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
+  reasons: string[];
+  decision: "allow" | "warn" | "require_approval" | "block";
+};
+
 type DLPScanResult = {
   dlpScanId: string;
   decision: "allow" | "warn" | "require_approval" | "block";
   severity: "None" | "Low" | "Medium" | "High" | "Critical";
   supported: boolean;
   matchedPatterns?: string[];
+  // Confidence-based DLP (Part 6/7): per-finding confidence/reason/decision, in display order.
+  riskReport?: DLPRiskReportEntry[];
 };
 
 export default function UploadFile() {
@@ -283,8 +293,10 @@ export default function UploadFile() {
 
       if (dlpRes.data.decision === "block") {
         setDlpStatus("blocked");
+        const blockedReport = (dlpRes.data.riskReport || []).find((r: DLPRiskReportEntry) => r.decision === "block");
+        const confidenceNote = blockedReport ? ` (${blockedReport.confidenceLevel} confidence, ${blockedReport.confidence}%)` : "";
         setError(
-          `Upload blocked: sensitive data (${(dlpRes.data.matchedPatterns || []).join(", ") || "policy violation"}) was detected by the DLP scanner.`
+          `Upload blocked: sensitive data (${(dlpRes.data.matchedPatterns || []).join(", ") || "policy violation"})${confidenceNote} was detected by the DLP scanner.`
         );
         toast.error("File blocked by DLP scan");
         setUploading(false);
@@ -891,6 +903,15 @@ export default function UploadFile() {
               <span className="font-semibold text-warning">{(dlpResult?.matchedPatterns || []).join(", ") || "sensitive information"}</span>.
               Do you want to continue uploading it anyway?
             </p>
+            {(dlpResult?.riskReport || []).length > 0 && (
+              <ul className="text-muted-foreground text-xs mb-3 space-y-1 list-disc list-inside">
+                {(dlpResult?.riskReport || []).map((r) => (
+                  <li key={r.pattern}>
+                    {r.pattern}: {r.confidenceLevel} confidence ({r.confidence}%){r.reasons?.[0] ? ` - ${r.reasons[0]}` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
             <p className="text-muted-foreground text-xs mb-5">
               Your choice is recorded in the DLP Center audit log. The file will still be encrypted end-to-end before it leaves your browser.
             </p>

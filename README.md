@@ -47,7 +47,7 @@ See [SECURITY.md](SECURITY.md) for the consolidated threat model and [CHANGELOG.
 - **Digital Signatures** (Phase 2): every upload is signed with a per-user ECDSA P-256 key; downloads verify the signature before decrypting, blocking tampered files outright
 - **Zero Trust Access Policies** (Phase 3): optional per-file country/IP/device allowlists, business-hours windows, device caps, and approval requirements, plus device fingerprinting and revocable sessions
 - **Malware Scanning & Quarantine** (Phase 4): every new upload is scanned pre-encryption (magic bytes, ClamAV, VirusTotal, MIME-mismatch/macro/archive heuristics) and automatically quarantined if flagged High/Critical risk
-- **Data Loss Prevention** (Phase 5): plaintext text-based uploads are scanned for embedded secrets/PII before encryption, with a configurable allow/warn/require-approval/block policy
+- **Data Loss Prevention** (Phase 5): plaintext text-based uploads are scanned for embedded secrets/PII before encryption, with a configurable allow/warn/require-approval/block policy; credit card detection is confidence-scored (Luhn validation + context analysis) to reject false positives like Ride IDs/Invoice Numbers instead of blocking on regex shape alone
 - **Centralized SIEM & SOC Dashboard** (Phase 6): every event from every phase above is normalized into one taxonomy with severity levels, automatically correlated into incidents, and surfaced in a unified Security Operations Center dashboard
 - **Audit Logging**: Track all file downloads with IP, device, browser, country, policy decision, and scan result
 - **Automatic Expiration**: Files automatically delete after expiry time
@@ -628,10 +628,12 @@ The legacy `encryptionVersion: 1` upload path scans inline, immediately after it
 |---|---|---|
 | `email` | Email addresses | Low severity, informational |
 | `phone` | Phone numbers (international/local formats) | Broad pattern, higher false-positive rate |
-| `credit_card` | Credit card numbers | **Luhn-validated** - candidate digit sequences that fail the checksum are discarded |
+| `credit_card` | Credit card numbers | **Confidence-scored** (see below) - Luhn validation + surrounding context, not a bare regex match |
 | `aadhaar` | Indian Aadhaar numbers | Regex + first-digit heuristic, not a full Verhoeff checksum |
 | `pan` | Indian PAN numbers | 5-letter/4-digit/1-letter format |
 | `passport` | Passport numbers | Deliberately broad (1-2 letters + 6-9 digits) - trades precision for recall |
+| `iban` | International Bank Account Numbers | Country code + check digits + BBAN, 15-34 chars after stripping spaces |
+| `swift_bic` | SWIFT/BIC bank codes | Only fires when a `SWIFT`/`BIC` keyword appears nearby - the bare 8/11-char pattern alone is too generic |
 | `aws_access_key` | AWS Access Key IDs | `AKIA`/`ASIA`/etc. prefix match |
 | `aws_secret_key` | AWS Secret Access Keys | Only fires when a 40-char base64-shaped string appears near an `aws_secret_access_key`-style key name, to avoid flagging arbitrary hashes |
 | `github_token` | GitHub Personal Access Tokens | `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` prefixes |
@@ -646,9 +648,39 @@ The legacy `encryptionVersion: 1` upload path scans inline, immediately after it
 
 Findings never store the raw matched value - only a masked preview (`backend/services/dlp/maskUtils.js`), e.g. `AK******LE`, enough for a human to recognize what was found without the DLP database itself becoming a leak.
 
+### Confidence-Based DLP Engine
+
+Bare regex matching has an inherent problem: a Rapido ride receipt's `Ride ID: 4111 1111 1111 1111` or a `Transaction ID` next to a long digit run is *shaped* exactly like a credit card, and a regex-only engine blocks it. `backend/services/dlp/confidenceEngine.js` adds a scoring layer on top of the existing regex detectors (currently wired into `credit_card`, see `detectors/creditCard.js`'s `detectWithConfidence()`) instead of replacing them - `detect()` keeps working exactly as before for any caller/test that uses it directly.
+
+The pipeline for a confidence-scored detector is:
+
+```
+Regex Detection → Validation (Luhn) → Context Analysis → Confidence Score → Risk Level → Decision
+```
+
+1. **Validation** - a credit-card-shaped candidate only counts as a real card if it also passes the Luhn checksum. An invalid checksum doesn't discard the candidate outright (unlike the legacy `detect()`); it just lowers confidence.
+2. **Context analysis** - the ~60 characters around the match are scanned for two opposite keyword sets:
+   - *Card keywords* (raise confidence): Visa, Mastercard, RuPay, Amex, Debit/Credit Card, Card Number, Expiry, CVV, Valid Thru, Payment Card, Bank, Cardholder, Account Holder.
+   - *Non-card ID keywords* (an explicit false-positive signal): Ride ID, Booking ID, Invoice/Receipt/Reference/Tracking/Order/Application/Vehicle Number, Employee/Student ID, Roll/Registration Number, Ticket Number, UPI Transaction ID, GST Invoice Number, Transaction ID. If one of these is nearby and no card keyword is, the candidate is treated as a false positive (confidence forced to 0) rather than blocked.
+3. **Confidence score** (0-100), weighted: `+40` regex match, `+40` Luhn pass, `+20` nearby card keywords - then reduced or zeroed if a non-card ID keyword is nearby.
+4. **Risk level**: `0-40` → **LOW**, `41-70` → **MEDIUM**, `71-100` → **HIGH**.
+5. **Decision** (Part 5 of the confidence engine, `decisionForConfidenceLevel`):
+
+| Risk Level | Decision |
+|---|---|
+| **LOW** | Allow, log only |
+| **MEDIUM** | Allow, warn the uploader |
+| **HIGH** | Block upload, log event, create a SIEM event |
+
+A per-finding `decisionHint` from this pipeline takes priority over the blanket per-detector policy in `resolveDecision` (`dlpPolicyConfig.js`) - so a LOW-confidence credit-card candidate is allowed even though `credit_card` is normally hard-blocked by `DETECTOR_ACTION_OVERRIDES`.
+
+Every finding - confidence-scored or not - carries a uniform **risk report** shape consumed by the DLP Center UI and SIEM events: `pattern`, `confidence`, `confidenceLevel`, `reasons` (human-readable "why this score"), masked `matchedText`, `context`, and `decision`. `runDLPScan` returns this as `riskReport` alongside the existing `findings`/`decision` fields, and `DLPScan.riskReport` persists it.
+
 ### Supported file types
 
-Only **text-based files** are scanned; DLP has nothing meaningful to say about binary content. `backend/services/dlp/textFileSupport.js` decides eligibility from extension, MIME type, and a printable-byte-ratio heuristic (the same style as `backend/utils/magicBytes.js`'s Phase 4 detection) - anything that doesn't look like text (images, video, most archives, executables) is **skipped gracefully**: the scan still completes and always resolves to `allow`, it just performs no content inspection. Text content is capped at 5MB per scan (`MAX_SCAN_BYTES`) to keep regex scan time bounded on very large files.
+Only **text-based files** are scanned; DLP has nothing meaningful to say about binary content. `backend/services/dlp/textFileSupport.js` decides eligibility from extension, MIME type, and a printable-byte-ratio heuristic - anything that doesn't look like text (images, video, most archives, executables) is **skipped gracefully**: the scan still completes and always resolves to `allow`, it just performs no content inspection. Text content is capped at 5MB per scan (`MAX_SCAN_BYTES`) to keep regex scan time bounded on very large files.
+
+Magic-byte sniffing (`backend/utils/magicBytes.js`'s `detectFileType()`, reused from Phase 4) takes priority over the printable-ratio heuristic: PDF, ZIP-based Office documents (docx/xlsx/pptx), RAR, 7z, gzip, executables, and RTF are hard-excluded from being treated as text even if their header happens to look printable. This closes a real bug where a PDF's mostly-ASCII object/xref structure passed the old printable-byte check, causing the DLP engine to regex/Luhn-scan the file's raw compressed bytes (e.g. the xref table's zero-padded offsets) and produce spurious credit-card findings on ordinary receipt/invoice PDFs. **PDFs are currently skipped entirely rather than content-inspected** - there is no PDF text-extraction step in this phase.
 
 ### Policy engine
 
@@ -661,13 +693,13 @@ Only **text-based files** are scanned; DLP has nothing meaningful to say about b
 | **Require Approval** | Upload is held until the uploader explicitly confirms via `POST /api/dlp/scans/:id/acknowledge`, then proceeds |
 | **Block** | Upload is refused outright - the file is never encrypted or stored |
 
-Default behavior: credentials/keys (AWS, GitHub, GitLab, Google, OpenAI, PEM private keys, hardcoded passwords, `.env` secrets) and credit card numbers are always **blocked** outright, regardless of the raw detector severity. Aadhaar/PAN/JWT findings **require approval**. Phone numbers and passports (higher false-positive patterns) only **warn**. Plain emails and certificates are **allowed**. Every one of these mappings lives in one exported config object (`SEVERITY_ACTION`, `DETECTOR_ACTION_OVERRIDES`), editable without touching any call site.
+Default behavior: credentials/keys (AWS, GitHub, GitLab, Google, OpenAI, PEM private keys, hardcoded passwords, `.env` secrets) are always **blocked** outright, regardless of the raw detector severity. Aadhaar/PAN/JWT/IBAN findings **require approval**. Phone numbers, passports, and SWIFT/BIC codes (higher false-positive patterns) only **warn**. Plain emails and certificates are **allowed**. Every one of these mappings lives in one exported config object (`SEVERITY_ACTION`, `DETECTOR_ACTION_OVERRIDES`), editable without touching any call site. `credit_card` is the one detector whose decision is no longer a blanket override - its confidence-based `decisionHint` (see above) decides per instance instead, so a real card is blocked but a false-positive Ride ID/Invoice Number is allowed.
 
 ### DLP Center
 
 `frontend/app/dlp/page.tsx` (linked from the navbar) gives users:
-- **Scan History** — every DLP scan triggered, with matched pattern types, severity, and decision
-- **Sensitive Data Findings** — scans with a non-`allow` decision, showing which detector categories fired
+- **Scan History** — every DLP scan triggered, with matched pattern/confidence, severity, and decision
+- **Sensitive Data Findings** — scans with a non-`allow` decision, showing each detector's confidence score, risk level, and per-finding decision
 - **Blocked Uploads** — scans that resulted in a hard block
 - **Top Detected Secret Types** — a ranked breakdown of the most frequently detected finding types
 - **DLP Statistics** — total scans, policy violations, blocked-upload count, severity breakdown
@@ -680,7 +712,7 @@ DLP runs **after the Phase 4 malware scan and before encryption**, in both uploa
 
 ### Extended audit logs
 
-DLP outcomes are recorded as `SecurityEvent` entries (`dlp_blocked`, `dlp_warning`, `dlp_sensitive_data_detected`) - the same fire-and-forget, non-blocking pattern used for every other Phase 3/4 security event.
+DLP outcomes are recorded as `SecurityEvent` entries (`dlp_blocked`, `dlp_warning`, `dlp_sensitive_data_detected`) - the same fire-and-forget, non-blocking pattern used for every other Phase 3/4 security event. Each event's `metadata` includes the full confidence-based risk report (pattern, confidence, reasons, context, decision) plus file name, uploader id, and timestamp, so SOAR/correlation rules and SIEM dashboards can reason about *why* a finding fired, not just that it did.
 
 ### Backward compatibility
 
@@ -1744,10 +1776,21 @@ See [PERFORMANCE.md](PERFORMANCE.md) for the full reference. Summary of what's a
       category: String,
       severity: String,    // "Low" | "Medium" | "High" | "Critical"
       count: Number,
-      samples: [String]    // masked previews only, e.g. "AK******LE" - never raw values
+      samples: [String],   // masked previews only, e.g. "AK******LE" - never raw values
+
+      // Confidence-Based DLP Engine fields (populated for every finding):
+      confidence: Number,        // 0-100
+      confidenceLevel: String,   // "LOW" | "MEDIUM" | "HIGH"
+      reasons: [String],         // e.g. "Luhn checksum passed", "No nearby card-related keywords"
+      context: String,           // surrounding text snippet used for context analysis, or null
+      decisionHint: String       // per-finding decision, may override the blanket detector policy
     }
   ],
   matchedPatterns: [String], // detector ids that matched, for quick filtering
+
+  // Part 6 risk report: one row per finding, shaped for direct display/SIEM consumption -
+  // { pattern, detectorId, confidence, confidenceLevel, reasons, matchedText, context, decision }
+  riskReport: [Mixed],
 
   severity: String,   // "None" | "Low" | "Medium" | "High" | "Critical"
 
