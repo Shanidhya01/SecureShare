@@ -21,6 +21,16 @@ import { runThreatScan } from "../services/threatScanService.js";
 import { runDLPScan } from "../services/dlp/dlpEngine.js";
 import { runThreatIntelScanAsync } from "../services/threatIntel/threatIntelIntegration.js";
 
+/* Fingerprints an RSA key (public or private - Node derives the public part automatically from a
+   private key) as sha256(DER SPKI), so upload/download can detect a server keypair mismatch (e.g.
+   RSA_PUBLIC_KEY/RSA_PRIVATE_KEY env vars out of sync with each other, or with keys/*.pem on a
+   different instance) instead of failing decryption with an undiagnosable generic error. Never
+   logs/returns raw key material - only this fingerprint. */
+const fingerprintRsaKey = (keyPemOrObject) => {
+  const der = crypto.createPublicKey(keyPemOrObject).export({ type: "spki", format: "der" });
+  return crypto.createHash("sha256").update(der).digest("hex");
+};
+
 /* Phase 4: links a completed ThreatScan doc to the File it was ultimately used for, marking it
    consumed so the same clean scan result can't be replayed across multiple uploads. Returns the
    {scanStatus, riskLevel, quarantined} to mirror onto the File doc itself (requirement 7) - kept
@@ -162,6 +172,11 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     aesKey
   ).toString("base64");
 
+  const rsaKeyFingerprint = fingerprintRsaKey(publicKey);
+  console.log(
+    `[v1 upload] aesKeyLen=${aesKey.length} ivLen=${iv.length} encryptedBytes=${encrypted.length} rsaKeyFingerprint=${rsaKeyFingerprint}`
+  );
+
   const uploadResult = await new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { resource_type: "raw" },
@@ -176,6 +191,7 @@ const uploadFileV1 = async (req, res, { parsedMaxDownloads, expiryMs, policy }) 
     encryptionVersion: 1,
     encryptedKey,
     iv: iv.toString("base64"),
+    rsaKeyFingerprint,
     passwordHash: password ? await bcrypt.hash(password, 10) : null,
     owner: req.user.id,
     oneTime: parsedMaxDownloads === 1,
@@ -677,15 +693,46 @@ const downloadFileV1 = async (req, res, file, context) => {
       }
     }
 
+    // Detect a server RSA keypair mismatch (e.g. RSA_PUBLIC_KEY/RSA_PRIVATE_KEY env vars out of
+    // sync, or a different instance's keys/*.pem than the one that encrypted this file) *before*
+    // attempting privateDecrypt, so it surfaces as a clear, actionable error instead of an
+    // OAEP-padding exception that looks identical to "wrong password" to the end user. Files
+    // uploaded before rsaKeyFingerprint existed have no stored value and skip this check.
+    if (file.rsaKeyFingerprint) {
+      const currentFingerprint = fingerprintRsaKey(privateKey);
+      if (currentFingerprint !== file.rsaKeyFingerprint) {
+        console.error(
+          `[v1 download] RSA key mismatch for file ${file._id}: uploaded with fingerprint ${file.rsaKeyFingerprint}, server currently holds ${currentFingerprint}`
+        );
+        return res.status(500).json({
+          error: "Server encryption key has changed since this file was uploaded and it can no longer be decrypted. Contact the administrator.",
+          code: "RSA_KEY_MISMATCH"
+        });
+      }
+    }
+
     const encryptedKeyBuf = Buffer.from(file.encryptedKey, "base64");
     const iv = Buffer.from(file.iv, "base64");
-    const aesKey = crypto.privateDecrypt(
-      { key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
-      encryptedKeyBuf
-    );
+    let aesKey;
+    try {
+      aesKey = crypto.privateDecrypt(
+        { key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
+        encryptedKeyBuf
+      );
+    } catch (err) {
+      console.error(`[v1 download] RSA privateDecrypt failed for file ${file._id}:`, err.message);
+      throw err;
+    }
 
     // Decrypt file content
-    const originalData = decryptBuffer(encryptedData, aesKey, iv);
+    let originalData;
+    try {
+      originalData = decryptBuffer(encryptedData, aesKey, iv);
+    } catch (err) {
+      console.error(`[v1 download] AES decrypt failed for file ${file._id} (aesKeyLen=${aesKey.length}, ivLen=${iv.length}):`, err.message);
+      throw err;
+    }
+    console.log(`[v1 download] decrypt success for file ${file._id}: aesKeyLen=${aesKey.length} ivLen=${iv.length} encryptedBytes=${encryptedData.length}`);
 
     // Stream decrypted file to client as attachment
     res.setHeader("Content-Type", "application/octet-stream");

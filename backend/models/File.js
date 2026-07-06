@@ -15,6 +15,11 @@ const fileSchema = new mongoose.Schema({
   encryptedKey: String,
   // v1: base64 16-byte CBC IV. v2: base64 12-byte (96-bit) GCM IV. Never both on the same doc.
   iv: String,
+  // v1 only: sha256 fingerprint (hex) of the DER-encoded RSA public key used to wrap encryptedKey,
+  // so downloadFileV1 can detect - and clearly report - a server RSA keypair mismatch (e.g. after a
+  // key rotation or a multi-instance deploy with divergent keys/*.pem) instead of a generic decrypt
+  // failure. Absent on files uploaded before this check existed; those skip the check.
+  rsaKeyFingerprint: String,
 
   // v2 fields: AES key wrapped client-side, server never sees the raw key.
   wrappedOwnerKey: String,          // AES key wrapped with the uploader's own RSA-OAEP-SHA256 public key
