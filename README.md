@@ -978,6 +978,24 @@ Everything needed to run SecureShare on its actual deployment target - Vercel (f
 
 ---
 
+## 🛡️ Phase 15: Frontend RBAC & Role-Aware UI
+
+Every admin-gated backend route from Phase 8 onward (`requireAdmin`/`requireRole` on SOAR, IAM, Compliance, Cloud Security, DevSecOps, and Platform) already rejected unauthorized requests server-side; this phase closes the client-side gap so the UI itself never renders, links to, or fetches data a normal user isn't allowed to touch - hiding admin functionality rather than disabling it.
+
+**Single source of truth** (`frontend/hooks/useRole.ts`): `useRole()` reads the same JWT `lib/auth.ts` has always decoded (`role`, the legacy `isAdmin` claim, `org_owner`) and exposes `{ ready, role, isAdmin, isOrgOwner, isAuthenticated }`, re-syncing on the existing `auth:changed`/`storage` events. Every RBAC surface in the app is now built on this one hook - no page re-decodes the token itself.
+
+**Guard components** (`frontend/components/rbac/RoleGuard.tsx`):
+- `<AdminOnly>` / `<RoleGuard role="admin" | "org_owner">` - hides `children` from the DOM entirely (not just disabled) unless the current user qualifies. Used for nav items, dashboard cards/quick actions, buttons, and admin-only sections embedded in otherwise-shared pages (Identity's Roles/Policies sections, SOAR's rule/playbook mutation controls, Security Center's admin shortcut links).
+- `<RequireRole role="...">` - full route protection for pages that are admin-only end to end (Compliance, Cloud Security, DevSecOps, Platform + its Scheduler/Reports/Backups sub-pages): redirects unauthenticated visitors to `/login` and authenticated non-admins to `/403`, so manually typing an admin URL never flashes real data before bouncing. The backend's `requireAdmin`/`requireRole` middleware remains the actual security boundary - this only prevents a confusing or broken screen client-side.
+
+**Nav/search/shortcuts filtering**: `SidebarNav` filters `navItems` by an `adminOnly` flag before rendering; `Topbar`'s account-menu shortcuts to Compliance/Cloud Security/DevSecOps are wrapped in `<AdminOnly>`; `QuickSearch` excludes admin-only result categories (Users, Compliance, Cloud Assets) from both rendering *and* fetching, so a normal user's search never issues a request against an endpoint it can't read.
+
+**403 page** (`frontend/app/403/page.tsx`): the landing page for `<RequireRole>`'s non-admin redirect.
+
+**Backward compatibility**: purely additive on the client - no backend route, middleware, or JWT shape changed. Every admin-gated page still enforces access server-side exactly as before; this phase only removes the UI affordances (links, buttons, search results, dashboard widgets) that a non-admin could see but never successfully use.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites

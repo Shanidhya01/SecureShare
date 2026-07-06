@@ -8,7 +8,7 @@ import Link from "next/link";
 import { ShieldCheck, Laptop, Trash2, Monitor, AlertCircle, Ban, UserPlus, KeyRound, LogOut, LogIn, ClipboardCheck, Cloud, ShieldHalf } from "lucide-react";
 import toast from "react-hot-toast";
 import { motion } from "framer-motion";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { AdminOnly } from "@/components/rbac/RoleGuard";
 import PageHeader from "@/components/design/PageHeader";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
@@ -86,7 +86,6 @@ export default function SecurityCenterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   const fetchAll = useCallback(async (token: string) => {
     try {
@@ -123,7 +122,6 @@ export default function SecurityCenterPage() {
       router.push("/login");
       return;
     }
-    setIsAdmin(getIsAdminFromToken(token));
     fetchAll(token);
   }, [fetchAll, router]);
 
@@ -238,7 +236,7 @@ export default function SecurityCenterPage() {
         title="Security Center"
         description="Zero Trust device, session, and access controls for your account."
         actions={
-          isAdmin ? (
+          <AdminOnly>
             <div className="flex flex-wrap gap-2">
               <Link
                 href="/compliance"
@@ -259,7 +257,7 @@ export default function SecurityCenterPage() {
                 <ShieldHalf size={16} /> DevSecOps
               </Link>
             </div>
-          ) : undefined
+          </AdminOnly>
         }
       />
 

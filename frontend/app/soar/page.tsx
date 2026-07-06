@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { useRole } from "@/hooks/useRole";
+import { AdminOnly } from "@/components/rbac/RoleGuard";
 import {
   Bot,
   Zap,
@@ -84,7 +85,7 @@ export default function SoarPage() {
   const router = useRouter();
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { isAdmin } = useRole();
   const [rules, setRules] = useState<Rule[]>([]);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [executions, setExecutions] = useState<Execution[]>([]);
@@ -132,7 +133,6 @@ export default function SoarPage() {
       router.push("/login");
       return;
     }
-    setIsAdmin(getIsAdminFromToken(token));
     fetchAll(token);
   }, [fetchAll, router]);
 
@@ -332,21 +332,19 @@ export default function SoarPage() {
       key: "actions",
       header: "Actions",
       render: (p) => (
-        <div className="flex items-center gap-2">
-          <button onClick={() => exportPlaybook(p)} title="Export" aria-label={`Export playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
-            <Download size={14} />
-          </button>
-          {isAdmin && (
-            <>
-              <button onClick={() => clonePlaybook(p._id)} title="Clone" aria-label={`Clone playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
-                <Copy size={14} />
-              </button>
-              <button onClick={() => deletePlaybook(p._id)} title="Delete" aria-label={`Delete playbook ${p.name}`} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
-                <Trash2 size={14} />
-              </button>
-            </>
-          )}
-        </div>
+        <AdminOnly fallback={<span className="text-xs text-muted-foreground">—</span>}>
+          <div className="flex items-center gap-2">
+            <button onClick={() => exportPlaybook(p)} title="Export" aria-label={`Export playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
+              <Download size={14} />
+            </button>
+            <button onClick={() => clonePlaybook(p._id)} title="Clone" aria-label={`Clone playbook ${p.name}`} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
+              <Copy size={14} />
+            </button>
+            <button onClick={() => deletePlaybook(p._id)} title="Delete" aria-label={`Delete playbook ${p.name}`} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </AdminOnly>
       ),
     },
   ];

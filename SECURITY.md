@@ -164,6 +164,20 @@ An operational-resilience layer, not a new detection or crypto boundary - it mon
 
 ---
 
+### Frontend RBAC & Role-Aware UI (Phase 15)
+
+A client-side hardening pass, not a new authorization boundary - every route this phase touches (SOAR, IAM, Compliance, Cloud Security, DevSecOps, Platform) was already enforced server-side by `requireAdmin`/`requireRole` since Phase 8/9. What was missing was the UI honoring the same boundary: a non-admin could previously see (and click into a 403 on) admin-only nav links, dashboard cards, and search results.
+
+**Hide, never disable**: `frontend/components/rbac/RoleGuard.tsx`'s `<AdminOnly>`/`<RoleGuard>` remove admin-only elements from the DOM outright rather than rendering them disabled/grayed-out - a disabled button still leaks that the feature exists and what it's called, which `<AdminOnly>` avoids entirely.
+
+**The frontend guard is a UX convenience, not the security boundary**: `<RequireRole>`'s client-side redirect to `/403` (or `/login`) only prevents a confusing screen flash for someone who manually types an admin URL or has a stale JWT in local storage - the actual authorization decision is still made by the backend's `requireAdmin`/`requireRole` middleware on every request, exactly as it was before this phase. A forged or manipulated client-side role check can hide UI but can never grant real access.
+
+**Search never queries what the user can't read**: `frontend/components/shell/QuickSearch.tsx` excludes admin-only categories (Users, Compliance evidence, Cloud assets) from its result set before issuing any request - a non-admin's search never fires a request against an endpoint that would 403, avoiding both the wasted round-trip and any risk of the failure leaking through the UI.
+
+**What Phase 15 does not do**: it does not change any backend route, middleware, or JWT claim; it does not introduce a new role or permission model (it reuses Phase 9's existing `role`/`isAdmin`/`org_owner` claims); and it does not change what an admin account can see or do - only what a non-admin account is shown.
+
+---
+
 ## Supported Algorithms
 
 | Purpose | Algorithm | Notes |

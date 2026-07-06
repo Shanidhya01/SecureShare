@@ -24,7 +24,8 @@ import {
   Activity,
   ClipboardCheck,
 } from "lucide-react";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { useRole } from "@/hooks/useRole";
+import { AdminOnly } from "@/components/rbac/RoleGuard";
 import {
   AreaChart,
   Area,
@@ -94,7 +95,7 @@ export default function DashboardOverview() {
   const [devices, setDevices] = useState<DeviceEntry[]>([]);
   const [events, setEvents] = useState<SecurityEventEntry[]>([]);
   const [compliance, setCompliance] = useState<ComplianceDashboard | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { isAdmin } = useRole();
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(
@@ -132,17 +133,19 @@ export default function DashboardOverview() {
       return;
     }
     fetchAll(token);
+  }, [fetchAll, router]);
 
+  useEffect(() => {
     // Compliance is an admin-only area (see /api/compliance/*) - only fetch the summary widget
     // for admins, so regular users never trigger a 403 against it.
-    if (getIsAdminFromToken(token)) {
-      setIsAdmin(true);
-      api
-        .get<ComplianceDashboard>("/compliance/dashboard", { headers: { Authorization: `Bearer ${token}` } })
-        .then((res) => setCompliance(res.data))
-        .catch(() => {});
-    }
-  }, [fetchAll, router]);
+    if (!isAdmin) return;
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    api
+      .get<ComplianceDashboard>("/compliance/dashboard", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => setCompliance(res.data))
+      .catch(() => {});
+  }, [isAdmin]);
 
   const trustedDevices = devices.filter((d) => d.trusted).length;
   const signedFiles = files.filter((f) => f.signature).length;
@@ -233,15 +236,17 @@ export default function DashboardOverview() {
           <StatCard label="Trusted Devices" value={`${trustedDevices}/${devices.length}`} icon={Laptop} variant="success" />
           <StatCard label="DLP Alerts" value={dlpStats?.policyViolations ?? 0} icon={Eye} variant="purple" />
           <StatCard label="Quarantined Files" value={threatStats?.quarantinedFiles ?? quarantinedInFiles} icon={Ban} variant="warning" />
-          {isAdmin && compliance && (
-            <Link href="/compliance">
-              <StatCard
-                label="Compliance Score"
-                value={`${compliance.overallScore}/100`}
-                icon={ClipboardCheck}
-                variant={compliance.overallScore >= 85 ? "success" : compliance.overallScore >= 60 ? "warning" : "danger"}
-              />
-            </Link>
+          {compliance && (
+            <AdminOnly>
+              <Link href="/compliance">
+                <StatCard
+                  label="Compliance Score"
+                  value={`${compliance.overallScore}/100`}
+                  icon={ClipboardCheck}
+                  variant={compliance.overallScore >= 85 ? "success" : compliance.overallScore >= 60 ? "warning" : "danger"}
+                />
+              </Link>
+            </AdminOnly>
           )}
         </motion.div>
       )}

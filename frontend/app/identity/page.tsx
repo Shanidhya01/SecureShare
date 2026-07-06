@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import api from "@/lib/api";
-import { getIsAdminFromToken, getIsOrgOwnerFromToken } from "@/lib/auth";
+import { useRole } from "@/hooks/useRole";
+import { AdminOnly } from "@/components/rbac/RoleGuard";
 import { registerPasskey } from "@/lib/webauthn";
 import {
   Fingerprint,
@@ -66,8 +67,7 @@ const CHART_COLORS = ["#A855F7", "#6366F1", "#F59E0B", "#EF4444", "#10B981", "#0
 
 export default function IdentityPage() {
   const router = useRouter();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isOrgOwner, setIsOrgOwner] = useState(false);
+  const { ready, isAdmin, isOrgOwner } = useRole();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -88,12 +88,9 @@ export default function IdentityPage() {
 
   const authHeader = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } });
 
-  const fetchAll = useCallback(async (token: string) => {
+  const fetchAll = useCallback(async (token: string, admin: boolean) => {
     try {
       setLoading(true);
-      const admin = getIsAdminFromToken(token);
-      setIsAdmin(admin);
-      setIsOrgOwner(getIsOrgOwnerFromToken(token));
 
       const requests: Promise<unknown>[] = [
         api.get("/mfa/status", { headers: { Authorization: `Bearer ${token}` } }),
@@ -131,13 +128,14 @@ export default function IdentityPage() {
   }, [router]);
 
   useEffect(() => {
+    if (!ready) return;
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
       return;
     }
-    fetchAll(token);
-  }, [fetchAll, router]);
+    fetchAll(token, isAdmin);
+  }, [fetchAll, router, ready, isAdmin]);
 
   const startMfaSetup = async () => {
     try {
@@ -433,7 +431,8 @@ export default function IdentityPage() {
         </section>
 
         {/* Policies (admin) */}
-        {isAdmin && policy && (
+        {policy && (
+        <AdminOnly>
           <section className="rounded-xl border border-border bg-card p-6">
             <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4"><SlidersHorizontal size={20} className="text-primary" /> Security Policies</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -461,10 +460,11 @@ export default function IdentityPage() {
             </div>
             <button type="button" onClick={savePolicy} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold">Save Policy</button>
           </section>
+        </AdminOnly>
         )}
 
         {/* Roles (admin) */}
-        {isAdmin && (
+        <AdminOnly>
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4"><Users size={20} className="text-primary" /> Roles</h2>
             <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -494,7 +494,7 @@ export default function IdentityPage() {
             </div>
             {!isOrgOwner && <p className="text-xs text-muted-foreground mt-2">Only an Organization Owner can change roles.</p>}
           </section>
-        )}
+        </AdminOnly>
 
         {/* Analytics (Phase 9.5) */}
         <section>

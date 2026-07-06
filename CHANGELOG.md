@@ -6,6 +6,31 @@ This project does not yet follow strict [Semantic Versioning](https://semver.org
 
 ---
 
+## Phase 15 — Frontend RBAC & Role-Aware UI
+**2026-07-06**
+
+Every admin-gated backend route since Phase 8/9 already rejected unauthorized requests server-side; this phase closes the matching client-side gap so the UI itself never renders a link, button, dashboard widget, or search result that a non-admin can't successfully use - hiding admin functionality outright rather than disabling it.
+
+### Added
+- `frontend/hooks/useRole.ts` - single source of truth for "what can this user see" on the frontend, decoding the existing JWT (`role`, `isAdmin`, `org_owner`) once and re-syncing on `auth:changed`/`storage` events.
+- `frontend/components/rbac/RoleGuard.tsx` - `<RoleGuard>`/`<AdminOnly>` (hide a piece of UI unless authorized) and `<RequireRole>` (full-page guard: redirects unauthenticated visitors to `/login`, unauthorized ones to `/403`).
+- `frontend/app/403/page.tsx` - landing page for `<RequireRole>`'s non-admin redirect.
+
+### Changed
+- `SidebarNav` filters `navItems` by an `adminOnly` flag; `Topbar`'s account-menu shortcuts to Compliance/Cloud Security/DevSecOps are wrapped in `<AdminOnly>`; `QuickSearch` excludes admin-only result categories (Users, Compliance, Cloud Assets) from rendering *and* fetching.
+- Compliance, Cloud Security, DevSecOps, Platform (+ Scheduler/Reports/Backups) pages now wrap their content in `<RequireRole role="admin">` instead of each page's own `getIsAdminFromToken` + toast + `router.push` boilerplate.
+- `app/dashboard/page.tsx`, `app/identity/page.tsx`, `app/soar/page.tsx`, `app/security/page.tsx` - replaced each page's local `isAdmin`/`isOrgOwner` state (populated by independently calling `getIsAdminFromToken`/`getIsOrgOwnerFromToken`) with the shared `useRole()` hook, and wrapped their admin-only sections (Identity's Policies/Roles, SOAR's rule/playbook mutation controls, the Dashboard's Compliance card, Security Center's admin shortcut links) in `<AdminOnly>`.
+
+### Fixed
+- `app/soar/page.tsx` - the per-playbook Export button called `GET /api/soar/playbooks/:id/export`, which `soar.routes.js` gates with `requireAdmin`, but the button rendered for every user regardless of role, so a normal user could click it and get a 403. Now wrapped in `<AdminOnly>` alongside the Clone/Delete buttons it already sat next to.
+
+### Verified, no changes needed
+- `frontend/lib/auth.ts` (`getIsAdminFromToken`/`getIsOrgOwnerFromToken`) is unchanged and still the sole JWT-decoding implementation `useRole()` builds on.
+- `frontend/components/design/NotificationCenter.tsx` is backed by `GET /api/security/events` (`getMySecurityEvents`), which is already scoped to the requesting user - no admin-only notifications exist to filter.
+- `cloud.routes.js`, `compliance.routes.js`, `devsecops.routes.js`, `platform.routes.js` gate their entire router with `router.use(auth, requireAdmin)`; `iam.routes.js`/`soar.routes.js` gate individual routes - the frontend guard shape (full-page `RequireRole` vs. section-level `AdminOnly`) already matches this exactly.
+
+---
+
 ## Phase 14 — Frontend Production QA
 **2026-07-05**
 

@@ -152,3 +152,31 @@ An operations layer over the platform's managed cloud dependencies, wired throug
 **Data model**: `PlatformHealthSnapshot`/`PlatformMetricSnapshot` (one per scan run, backing the dashboard's trend charts - the same "current state + append-only history" shape Phase 10/11/12 already established), `PlatformJob` (one per background job execution), `PlatformScheduledJob` (one per registered cron job), `PlatformAlert` (active/resolved alert instances), `PlatformBackup` (one per backup archive, with checksum + validation state).
 
 For the full endpoint list, SIEM event catalog, and SOAR trigger wiring, see [README.md's Phase 13 section](README.md#%EF%B8%8F-phase-13-production-hardening--cloud-platform-operations), [API.md](API.md), [MONITORING.md](MONITORING.md), and [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Phase 15: Frontend RBAC & Role-Aware UI
+
+```
+                JWT (role, isAdmin, org_owner claims)
+                              │
+                              ▼
+                  frontend/hooks/useRole.ts
+              { ready, role, isAdmin, isOrgOwner }
+                              │
+              ┌───────────────┼────────────────┐
+              ▼               ▼                ▼
+        <AdminOnly>/    <RequireRole>      SidebarNav /
+        <RoleGuard>     (full-page guard,   Topbar / QuickSearch
+        (hide a piece    redirect to         (filter nav items,
+         of a shared      /login or /403)     shortcuts, and
+         page)                                search categories)
+```
+
+Every admin-gated backend router (`cloud.routes.js`, `compliance.routes.js`, `devsecops.routes.js`, `platform.routes.js` - all `router.use(auth, requireAdmin)`; `iam.routes.js` and `soar.routes.js` - `requireAdmin`/`requireRole` per-route) already enforced access server-side since Phase 8/9. This phase makes the frontend match that boundary exactly, so a non-admin never sees a link, button, or search result that leads to a 403.
+
+**Two guard shapes, chosen by whether the backend gates the whole router or just some routes on it**: pages fully behind `router.use(auth, requireAdmin)` (Compliance, Cloud Security, DevSecOps, Platform + sub-pages) are wrapped once at the page level in `<RequireRole role="admin">`. Pages that mix open and admin-only routes (Identity: policy GET is open, PUT is admin-only, role PATCH is `org_owner`-only; SOAR: rule/playbook reads are open, mutations are admin-only) instead wrap just the admin-only JSX in `<AdminOnly>`, leaving the rest of the page visible to every authenticated user.
+
+**No duplicated role logic**: earlier iterations of these pages independently called `getIsAdminFromToken(localStorage.getItem("token"))` into local component state; all of that was consolidated onto the single `useRole()` hook so there is exactly one place that decodes the JWT for UI purposes.
+
+See [README.md's Phase 15 section](README.md#%EF%B8%8F-phase-15-frontend-rbac--role-aware-ui) for the full component/file breakdown.
