@@ -21,6 +21,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import SidebarNav from "./SidebarNav";
 import NotificationCenter from "@/components/design/NotificationCenter";
 import type { SecurityEventEntry } from "@/lib/securityEvents";
+import { AdminOnly } from "@/components/rbac/RoleGuard";
 
 export default function Topbar() {
   const router = useRouter();
@@ -149,15 +150,17 @@ export default function Topbar() {
               <DropdownMenuItem onClick={() => router.push("/security")}>
                 <ShieldCheck size={14} /> Security Center
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/compliance")}>
-                <ClipboardCheck size={14} /> Compliance Center
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/cloud-security")}>
-                <Cloud size={14} /> Cloud Security
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/devsecops")}>
-                <ShieldHalf size={14} /> DevSecOps
-              </DropdownMenuItem>
+              <AdminOnly>
+                <DropdownMenuItem onClick={() => router.push("/compliance")}>
+                  <ClipboardCheck size={14} /> Compliance Center
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/cloud-security")}>
+                  <Cloud size={14} /> Cloud Security
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/devsecops")}>
+                  <ShieldHalf size={14} /> DevSecOps
+                </DropdownMenuItem>
+              </AdminOnly>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={logout}>
                 <LogOut size={14} /> Logout

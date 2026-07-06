@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { Boxes, AlertCircle, ArrowLeft, Download } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -15,7 +15,7 @@ import { apiErrorStatus } from "@/lib/errors";
 
 type Sbom = { _id: string; format: string; serialization: string; componentCount: number; filename: string; createdAt: string };
 
-export default function DevSecOpsSbomPage() {
+function DevSecOpsSbomPageContent() {
   const router = useRouter();
   const [sboms, setSboms] = useState<Sbom[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,11 +53,6 @@ export default function DevSecOpsSbomPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for DevSecOps");
-      router.push("/dashboard");
       return;
     }
     fetchSboms(token);
@@ -123,5 +118,13 @@ export default function DevSecOpsSbomPage() {
 
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={sboms} rowKey={(s) => s._id} emptyLabel="No SBOM generated yet." />}
     </div>
+  );
+}
+
+export default function DevSecOpsSbomPage() {
+  return (
+    <RequireRole role="admin">
+      <DevSecOpsSbomPageContent />
+    </RequireRole>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import {
   ShieldHalf,
   GitBranch,
@@ -53,7 +53,7 @@ const SEVERITY_TONE: Record<string, StatusTone> = { CRITICAL: "danger", HIGH: "d
 const SEVERITY_COLORS: Record<string, string> = { CRITICAL: "#EF4444", HIGH: "#F97316", MEDIUM: "#F59E0B", LOW: "#3B82F6", INFO: "#64748B" };
 const CATEGORY_COLORS: Record<string, string> = { DEPENDENCY: "#6366F1", SECRET: "#EF4444", SAST: "#F59E0B", CONTAINER: "#8B5CF6", IAC: "#10B981", PIPELINE: "#3B82F6" };
 
-export default function DevSecOpsPage() {
+function DevSecOpsPageContent() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -91,11 +91,6 @@ export default function DevSecOpsPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for DevSecOps");
-      router.push("/dashboard");
       return;
     }
     fetchDashboard(token);
@@ -381,5 +376,13 @@ export default function DevSecOpsPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function DevSecOpsPage() {
+  return (
+    <RequireRole role="admin">
+      <DevSecOpsPageContent />
+    </RequireRole>
   );
 }

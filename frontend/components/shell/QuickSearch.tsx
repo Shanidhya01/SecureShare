@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import SearchInput from "@/components/design/SearchInput";
 import { Spinner } from "@/components/design/Loader";
 import { cn } from "@/lib/utils";
+import { useRole } from "@/hooks/useRole";
 
 type ResultItem = {
   id: string;
@@ -23,6 +24,9 @@ type Category = {
   href: string;
   fetch: (token: string) => Promise<ResultItem[]>;
   match: (item: ResultItem, query: string) => boolean;
+  /** Backed by an admin-only endpoint (see backend/routes/{iam,compliance,cloud}.routes.js) -
+   *  excluded from non-admin searches so it never fires a needless 403 or surfaces org-wide data. */
+  adminOnly?: boolean;
 };
 
 const authHeaders = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } });
@@ -74,6 +78,7 @@ const CATEGORIES: Category[] = [
     label: "Users",
     icon: Fingerprint,
     href: "/identity",
+    adminOnly: true,
     fetch: async (token) => {
       const res = await api.get<{ _id: string; name?: string; email: string }[]>("/iam/users", authHeaders(token));
       return (res.data || []).map((u) => ({ id: u._id, title: u.name || u.email, subtitle: u.email, href: "/identity" }));
@@ -85,6 +90,7 @@ const CATEGORIES: Category[] = [
     label: "Compliance",
     icon: ClipboardCheck,
     href: "/compliance",
+    adminOnly: true,
     fetch: async (token) => {
       const res = await api.get<{ _id: string; summary: string; control: { title: string } | null }[]>(
         "/compliance/evidence",
@@ -104,6 +110,7 @@ const CATEGORIES: Category[] = [
     label: "Cloud Assets",
     icon: Cloud,
     href: "/cloud-security/assets",
+    adminOnly: true,
     fetch: async (token) => {
       const res = await api.get<{ _id: string; name: string; type?: string }[]>("/cloud/assets", authHeaders(token));
       return (res.data || []).map((a) => ({ id: a._id, title: a.name, subtitle: a.type, href: "/cloud-security/assets" }));
@@ -142,6 +149,7 @@ type FlatEntry =
  *  once per open and filtered client-side, the same pattern individual pages already use. */
 export default function QuickSearch() {
   const router = useRouter();
+  const { isAdmin } = useRole();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -150,13 +158,15 @@ export default function QuickSearch() {
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const categories = useMemo(() => CATEGORIES.filter((cat) => !cat.adminOnly || isAdmin), [isAdmin]);
+
   const loadAll = useCallback(async () => {
     const token = localStorage.getItem("token");
     if (!token) return;
     setLoading(true);
     try {
       const entries = await Promise.all(
-        CATEGORIES.map(async (cat) => {
+        categories.map(async (cat) => {
           try {
             return [cat.id, await cat.fetch(token)] as const;
           } catch {
@@ -168,7 +178,7 @@ export default function QuickSearch() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [categories]);
 
   useEffect(() => {
     const openPalette = () => setOpen(true);
@@ -197,11 +207,13 @@ export default function QuickSearch() {
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return CATEGORIES.map((cat) => ({
-      category: cat,
-      items: (resultsByCategory[cat.id] || []).filter((item) => cat.match(item, q)).slice(0, RESULTS_PER_CATEGORY),
-    })).filter((group) => group.items.length > 0);
-  }, [query, resultsByCategory]);
+    return categories
+      .map((cat) => ({
+        category: cat,
+        items: (resultsByCategory[cat.id] || []).filter((item) => cat.match(item, q)).slice(0, RESULTS_PER_CATEGORY),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [query, resultsByCategory, categories]);
 
   const flatList: FlatEntry[] = useMemo(() => {
     if (!query.trim()) return recent.map((term) => ({ kind: "recent", term }) as const);

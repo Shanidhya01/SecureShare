@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import {
   Cloud,
   ShieldAlert,
@@ -54,7 +54,7 @@ const SEVERITY_COLORS: Record<string, string> = { CRITICAL: "#EF4444", HIGH: "#F
 const CATEGORY_COLORS: Record<string, string> = { CONFIGURATION: "#6366F1", EXPOSURE: "#EF4444", CERTIFICATE: "#F59E0B", THREAT_INTEL: "#8B5CF6" };
 const CERT_COLORS: Record<string, string> = { valid: "#10B981", expiring: "#F59E0B", expired: "#EF4444", unreachable: "#64748B" };
 
-export default function CloudSecurityPage() {
+function CloudSecurityPageContent() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -92,11 +92,6 @@ export default function CloudSecurityPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
       return;
     }
     fetchDashboard(token);
@@ -387,5 +382,13 @@ export default function CloudSecurityPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function CloudSecurityPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudSecurityPageContent />
+    </RequireRole>
   );
 }

@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { FileText, Download, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
 
-export default function CloudReportsPage() {
+function CloudReportsPageContent() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
@@ -18,11 +18,6 @@ export default function CloudReportsPage() {
       const token = localStorage.getItem("token");
       if (!token) {
         router.push("/login");
-        return;
-      }
-      if (!getIsAdminFromToken(token)) {
-        toast.error("Admin access required for Cloud Security");
-        router.push("/dashboard");
         return;
       }
       setReady(true);
@@ -80,5 +75,13 @@ export default function CloudReportsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function CloudReportsPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudReportsPageContent />
+    </RequireRole>
   );
 }

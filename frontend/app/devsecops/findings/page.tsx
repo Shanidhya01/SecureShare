@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { ShieldAlert, AlertCircle, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -37,7 +37,7 @@ const ENDPOINT_BY_CATEGORY: Record<string, string> = {
   IAC: "/devsecops/iac",
 };
 
-export default function DevSecOpsFindingsPage() {
+function DevSecOpsFindingsPageContent() {
   const router = useRouter();
   const [category, setCategory] = useState<string>("DEPENDENCY");
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -73,11 +73,6 @@ export default function DevSecOpsFindingsPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for DevSecOps");
-      router.push("/dashboard");
       return;
     }
     fetchFindings(token, category);
@@ -126,5 +121,13 @@ export default function DevSecOpsFindingsPage() {
 
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={findings} rowKey={(f) => f._id} stickyHeader maxHeight="70vh" emptyLabel="No open findings in this category - run a scan from the dashboard." />}
     </div>
+  );
+}
+
+export default function DevSecOpsFindingsPage() {
+  return (
+    <RequireRole role="admin">
+      <DevSecOpsFindingsPageContent />
+    </RequireRole>
   );
 }

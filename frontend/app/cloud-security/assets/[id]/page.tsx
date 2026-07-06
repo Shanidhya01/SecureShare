@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { ServerCog, AlertCircle, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -32,7 +32,7 @@ type IncidentRow = { _id: string; title: string; severity: string; status: strin
 
 const SEVERITY_TONE: Record<string, StatusTone> = { CRITICAL: "danger", HIGH: "danger", MEDIUM: "warning", LOW: "info", INFO: "neutral" };
 
-export default function CloudAssetDetailPage() {
+function CloudAssetDetailPageContent() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const [asset, setAsset] = useState<Asset | null>(null);
@@ -78,11 +78,6 @@ export default function CloudAssetDetailPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
       return;
     }
     fetchAsset(token);
@@ -180,5 +175,13 @@ export default function CloudAssetDetailPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function CloudAssetDetailPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudAssetDetailPageContent />
+    </RequireRole>
   );
 }

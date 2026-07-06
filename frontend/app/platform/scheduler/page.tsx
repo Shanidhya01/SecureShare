@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { CalendarClock, Play, Pause, PlayCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -27,7 +27,7 @@ type ScheduledJob = {
 
 const STATUS_TONE: Record<string, StatusTone> = { success: "success", failed: "danger", never_run: "neutral" };
 
-export default function SchedulerPage() {
+function SchedulerPageContent() {
   const router = useRouter();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,8 +55,8 @@ export default function SchedulerPage() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token || !getIsAdminFromToken(token)) {
-      router.push(token ? "/dashboard" : "/login");
+    if (!token) {
+      router.push("/login");
       return;
     }
     fetchJobs();
@@ -112,5 +112,13 @@ export default function SchedulerPage() {
       <PageHeader icon={CalendarClock} title="Scheduler" description="Scheduled scans and platform jobs - run now, pause, or resume. Admin only." accent="primary" />
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={jobs} rowKey={(j) => j.key} emptyLabel="No scheduled jobs registered yet." />}
     </div>
+  );
+}
+
+export default function SchedulerPage() {
+  return (
+    <RequireRole role="admin">
+      <SchedulerPageContent />
+    </RequireRole>
   );
 }

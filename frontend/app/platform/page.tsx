@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import {
   Activity,
   Database,
@@ -62,7 +62,7 @@ function componentValue(components: Component[], name: string) {
   return components.find((c) => c.name === name);
 }
 
-export default function PlatformPage() {
+function PlatformPageContent() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,11 +112,6 @@ export default function PlatformPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Platform Operations");
-      router.push("/dashboard");
       return;
     }
     fetchDashboard(token);
@@ -428,5 +423,13 @@ export default function PlatformPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function PlatformPage() {
+  return (
+    <RequireRole role="admin">
+      <PlatformPageContent />
+    </RequireRole>
   );
 }

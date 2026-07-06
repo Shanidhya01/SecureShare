@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { ShieldAlert, AlertCircle, ArrowLeft, Check } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -28,7 +28,7 @@ type Finding = {
 
 const SEVERITY_TONE: Record<string, StatusTone> = { CRITICAL: "danger", HIGH: "danger", MEDIUM: "warning", LOW: "info", INFO: "neutral" };
 
-export default function CloudFindingsPage() {
+function CloudFindingsPageContent() {
   const router = useRouter();
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,11 +65,6 @@ export default function CloudFindingsPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
       return;
     }
     fetchFindings(token);
@@ -125,5 +120,13 @@ export default function CloudFindingsPage() {
 
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={findings} rowKey={(f) => f._id} stickyHeader maxHeight="75vh" emptyLabel="No open findings - run a scan from the dashboard." />}
     </div>
+  );
+}
+
+export default function CloudFindingsPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudFindingsPageContent />
+    </RequireRole>
   );
 }

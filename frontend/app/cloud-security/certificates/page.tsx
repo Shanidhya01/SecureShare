@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { Lock, AlertCircle, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -28,7 +28,7 @@ type Certificate = {
 
 const STATUS_TONE: Record<string, StatusTone> = { valid: "success", expiring: "warning", expired: "danger", unreachable: "neutral" };
 
-export default function CloudCertificatesPage() {
+function CloudCertificatesPageContent() {
   const router = useRouter();
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,11 +63,6 @@ export default function CloudCertificatesPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
       return;
     }
     fetchCertificates(token);
@@ -115,5 +110,13 @@ export default function CloudCertificatesPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function CloudCertificatesPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudCertificatesPageContent />
+    </RequireRole>
   );
 }

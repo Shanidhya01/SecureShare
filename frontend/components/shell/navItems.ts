@@ -24,6 +24,10 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   group: string;
+  /** Set when the backend enforces requireAdmin for every route under this page (see
+   *  backend/routes/{compliance,cloud,devsecops,platform}.routes.js). Non-admins never see the
+   *  link - the page itself also redirects if reached directly. */
+  adminOnly?: boolean;
 };
 
 export const navItems: NavItem[] = [
@@ -37,10 +41,10 @@ export const navItems: NavItem[] = [
   { label: "Security Center", href: "/security", icon: ShieldCheck, group: "Security Operations" },
   { label: "Security Operations", href: "/soc", icon: Radar, group: "Security Operations" },
   { label: "Identity & Access", href: "/identity", icon: Fingerprint, group: "Identity & Governance" },
-  { label: "Compliance", href: "/compliance", icon: ClipboardCheck, group: "Identity & Governance" },
-  { label: "Cloud Security", href: "/cloud-security", icon: Cloud, group: "Platform" },
-  { label: "DevSecOps", href: "/devsecops", icon: ShieldHalf, group: "Platform" },
-  { label: "Platform", href: "/platform", icon: Activity, group: "Platform" },
+  { label: "Compliance", href: "/compliance", icon: ClipboardCheck, group: "Identity & Governance", adminOnly: true },
+  { label: "Cloud Security", href: "/cloud-security", icon: Cloud, group: "Platform", adminOnly: true },
+  { label: "DevSecOps", href: "/devsecops", icon: ShieldHalf, group: "Platform", adminOnly: true },
+  { label: "Platform", href: "/platform", icon: Activity, group: "Platform", adminOnly: true },
   { label: "Analytics", href: "/analytics", icon: BarChart3, group: "Insights" },
   { label: "Audit Logs", href: "/audit", icon: ScrollText, group: "Insights" },
   { label: "Settings", href: "/settings", icon: Settings, group: "Account" },

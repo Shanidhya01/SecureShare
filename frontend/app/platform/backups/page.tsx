@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { Archive, ShieldCheck, Play } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -24,7 +24,7 @@ type Backup = {
 
 const TYPES = ["database", "configuration", "metadata", "audit", "full"];
 
-export default function BackupsPage() {
+function BackupsPageContent() {
   const router = useRouter();
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,8 +53,8 @@ export default function BackupsPage() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token || !getIsAdminFromToken(token)) {
-      router.push(token ? "/dashboard" : "/login");
+    if (!token) {
+      router.push("/login");
       return;
     }
     fetchBackups();
@@ -123,5 +123,13 @@ export default function BackupsPage() {
       />
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={backups} rowKey={(b) => b._id} emptyLabel="No backups have been created yet." />}
     </div>
+  );
+}
+
+export default function BackupsPage() {
+  return (
+    <RequireRole role="admin">
+      <BackupsPageContent />
+    </RequireRole>
   );
 }

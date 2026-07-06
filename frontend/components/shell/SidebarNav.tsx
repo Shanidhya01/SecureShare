@@ -5,10 +5,11 @@ import { usePathname } from "next/navigation";
 import { Lock } from "lucide-react";
 import { navItems } from "./navItems";
 import { cn } from "@/lib/utils";
+import { useRole } from "@/hooks/useRole";
 
-function groupItems() {
+function groupItems(items: typeof navItems) {
   const groups: { name: string; items: typeof navItems }[] = [];
-  for (const item of navItems) {
+  for (const item of items) {
     const last = groups[groups.length - 1];
     if (last && last.name === item.group) {
       last.items.push(item);
@@ -21,7 +22,9 @@ function groupItems() {
 
 export default function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const groups = groupItems();
+  const { isAdmin } = useRole();
+  const visibleItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const groups = groupItems(visibleItems);
 
   return (
     <div className="flex h-full flex-col">

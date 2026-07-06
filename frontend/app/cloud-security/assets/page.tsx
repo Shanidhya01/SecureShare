@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import { ServerCog, AlertCircle, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import PageHeader from "@/components/design/PageHeader";
@@ -25,7 +25,7 @@ type Asset = {
   lastScan: string | null;
 };
 
-export default function CloudAssetsPage() {
+function CloudAssetsPageContent() {
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,11 +60,6 @@ export default function CloudAssetsPage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for Cloud Security");
-      router.push("/dashboard");
       return;
     }
     fetchAssets(token);
@@ -104,5 +99,13 @@ export default function CloudAssetsPage() {
 
       {loading ? <TableSkeleton /> : <DataTable columns={columns} rows={assets} rowKey={(a) => a._id} stickyHeader maxHeight="75vh" emptyLabel="No assets discovered yet - run a scan from the dashboard." />}
     </div>
+  );
+}
+
+export default function CloudAssetsPage() {
+  return (
+    <RequireRole role="admin">
+      <CloudAssetsPageContent />
+    </RequireRole>
   );
 }

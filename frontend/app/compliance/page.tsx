@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import {
   ClipboardCheck,
   ShieldAlert,
@@ -72,7 +72,7 @@ const STATUS_TONE: Record<string, StatusTone> = { PASS: "success", FAIL: "danger
 const COVERAGE_COLORS: Record<string, string> = { PASS: "#10B981", FAIL: "#EF4444", PARTIAL: "#F59E0B", NOT_APPLICABLE: "#64748B" };
 const RISK_COLORS: Record<string, string> = { Low: "#10B981", Medium: "#F59E0B", High: "#F97316", Critical: "#EF4444" };
 
-export default function CompliancePage() {
+function CompliancePageContent() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
@@ -115,11 +115,6 @@ export default function CompliancePage() {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
-      return;
-    }
-    if (!getIsAdminFromToken(token)) {
-      toast.error("Admin access required for the Compliance Center");
-      router.push("/dashboard");
       return;
     }
     fetchDashboard(token);
@@ -464,5 +459,13 @@ export default function CompliancePage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function CompliancePage() {
+  return (
+    <RequireRole role="admin">
+      <CompliancePageContent />
+    </RequireRole>
   );
 }

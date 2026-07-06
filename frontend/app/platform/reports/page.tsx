@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getIsAdminFromToken } from "@/lib/auth";
+import { RequireRole } from "@/components/rbac/RoleGuard";
 import api from "@/lib/api";
 import { FileText, Download } from "lucide-react";
 import toast from "react-hot-toast";
@@ -17,14 +17,14 @@ const REPORT_TYPES = [
 ];
 const FORMATS = ["pdf", "csv", "json"] as const;
 
-export default function PlatformReportsPage() {
+function PlatformReportsPageContent() {
   const router = useRouter();
   const [generating, setGenerating] = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token || !getIsAdminFromToken(token)) {
-      router.push(token ? "/dashboard" : "/login");
+    if (!token) {
+      router.push("/login");
     }
   }, [router]);
 
@@ -77,5 +77,13 @@ export default function PlatformReportsPage() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function PlatformReportsPage() {
+  return (
+    <RequireRole role="admin">
+      <PlatformReportsPageContent />
+    </RequireRole>
   );
 }
