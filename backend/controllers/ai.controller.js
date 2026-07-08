@@ -15,7 +15,7 @@ function respondWithResult(res, insight, result, payload) {
     return res.status(200).json({
       insightId: insight._id,
       status: "skipped",
-      message: "AI Security Assistant is not configured (GEMINI_API_KEY is unset). Ask an administrator to enable it."
+      message: "AI Security Assistant is not configured (OPENROUTER_API_KEY is unset). Ask an administrator to enable it."
     });
   }
   if (result.status === "error") {
@@ -54,7 +54,7 @@ export const explainThreat = async (req, res) => {
       sourceId,
       prompt: result.prompt,
       response: result.explanation || result.rawText || null,
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -100,7 +100,7 @@ export const explainRisk = async (req, res) => {
       sourceId,
       prompt: result.prompt,
       response: result.explanation || result.rawText || null,
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -147,7 +147,7 @@ export const askAssistant = async (req, res) => {
       type: "chat_response",
       prompt: result.prompt,
       response: result.answer,
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -164,7 +164,7 @@ export const askAssistant = async (req, res) => {
       return res.status(200).json({
         insightId: insight._id,
         status: "skipped",
-        message: "AI Security Assistant is not configured (GEMINI_API_KEY is unset). Ask an administrator to enable it."
+        message: "AI Security Assistant is not configured (OPENROUTER_API_KEY is unset). Ask an administrator to enable it."
       });
     }
     if (result.status === "error") {
@@ -202,7 +202,7 @@ export const generateSummary = async (req, res) => {
       owner: req.user.id,
       type: "incident_summary",
       response: { stats: result.stats, narrative: result.narrative },
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -220,7 +220,7 @@ export const generateSummary = async (req, res) => {
         insightId: insight._id,
         status: "skipped",
         stats: result.stats,
-        message: "AI narrative is not configured (GEMINI_API_KEY is unset), but the real stats below are still accurate."
+        message: "AI narrative is not configured (OPENROUTER_API_KEY is unset), but the real stats below are still accurate."
       });
     }
 
