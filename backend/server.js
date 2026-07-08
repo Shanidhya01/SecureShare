@@ -50,6 +50,20 @@ app.use(cors());
 app.use(express.json());
 app.use("/api", apiLimiter);
 
+// Fail fast instead of hanging: if MongoDB isn't connected yet (or the connection dropped), every
+// query issued by a route handler would otherwise sit in Mongoose's command buffer until it times
+// out (~10s, surfacing as a generic 500 with a "buffering timed out" message) - this middleware
+// checks the connection state up front and returns an immediate, clear 503 instead. /api/health is
+// exempt so health checks/monitoring can still report the real DB status rather than being blocked
+// by it.
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health") return next();
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: "Database unavailable. Please try again shortly." });
+  }
+  next();
+});
+
 // Phase 13 (Platform Operations): shared Redis client for rate limiting/queue/health checks.
 // Non-fatal if REDIS_URL is unset or unreachable - every consumer degrades gracefully (Part 4/6).
 getRedisClient();

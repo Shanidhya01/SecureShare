@@ -183,7 +183,10 @@ export async function runHealthCheck({ owner, persist = true } = {}) {
     ? await PlatformHealthSnapshot.create({ overallScore: score, overallStatus, components, checkedAt: new Date() })
     : { overallScore: score, overallStatus, components, checkedAt: new Date() };
 
-  if (persist && previous && previous.overallStatus !== overallStatus) {
+  // SecurityEvent.owner is required - on a fresh database (no admin registered yet), the
+  // startup/scheduled scan runs with owner undefined. The health snapshot is still recorded
+  // either way; only the (owner-scoped) SIEM event is skipped until an owner exists.
+  if (persist && previous && previous.overallStatus !== overallStatus && owner) {
     await logSecurityEvent({
       owner,
       type: "platform_health_changed",

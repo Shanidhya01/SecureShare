@@ -29,7 +29,12 @@ const complianceControlSchema = new mongoose.Schema(
         // Phase 11 (CSPM/ASM): cloud security posture findings feed into compliance scoring.
         "cloudSecurityEvaluator",
         // Phase 12 (DevSecOps/Supply Chain): dependency/secret/SAST/container/IaC findings.
-        "devSecOpsEvaluator"
+        "devSecOpsEvaluator",
+        // Phase 13 (Platform Operations): health/backup/availability findings feed into
+        // compliance scoring too - see controlEvaluators.js's platformOpsEvaluator, used by
+        // seedFrameworks.js's ISO A.8.14/SOC2 A1.2/PCI A2.1/NIST PR.PT-5 controls. This was
+        // implemented and referenced but never added to this enum - the actual bug.
+        "platformOpsEvaluator"
       ]
     },
     recommendation: String,

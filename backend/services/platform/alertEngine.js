@@ -99,7 +99,12 @@ export async function evaluateAlerts({ health, metrics, owner } = {}) {
     if (matched && !existing) {
       const message = rule.message(ctx);
       const alert = await PlatformAlert.create({ rule: rule.rule, severity: rule.severity, message, active: true });
-      await logSecurityEvent({ owner, type: rule.siemType, message, metadata: { rule: rule.rule } }).catch(() => {});
+      // SecurityEvent.owner is required - on a fresh database (no admin registered yet), the
+      // startup/scheduled scan calls this with owner undefined. The PlatformAlert itself is still
+      // recorded either way; only the (owner-scoped) SIEM event is skipped until an owner exists.
+      if (owner) {
+        await logSecurityEvent({ owner, type: rule.siemType, message, metadata: { rule: rule.rule } }).catch(() => {});
+      }
       triggered.push(alert);
     } else if (!matched && existing) {
       existing.active = false;
