@@ -20,6 +20,7 @@ import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
 import { computeSecurityScore } from "@/lib/securityScore";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
 import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
+import ExplainWithAIButton from "@/components/ai/ExplainWithAIButton";
 
 type DeviceEntry = {
   deviceId: string;
@@ -360,11 +361,16 @@ export default function SecurityCenterPage() {
                 {blockedAttempts.map((e) => (
                   <div key={e.id} className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
                     <Ban size={16} className="text-destructive shrink-0 mt-0.5" />
-                    <div className="min-w-0">
-                      <p className="text-foreground text-sm">
-                        {e.filename && <span className="font-semibold">{e.filename}: </span>}
-                        {e.message}
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-foreground text-sm">
+                          {e.filename && <span className="font-semibold">{e.filename}: </span>}
+                          {e.message}
+                        </p>
+                        <div className="shrink-0">
+                          <ExplainWithAIButton sourceType="SecurityEvent" sourceId={e.id} />
+                        </div>
+                      </div>
                       <p className="text-muted-foreground text-xs mt-1">
                         {formatDate(e.createdAt)}
                         {e.ip ? ` · ${e.ip}` : ""}

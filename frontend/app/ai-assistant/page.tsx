@@ -11,6 +11,7 @@ import StatusBadge, { type StatusTone } from "@/components/design/StatusBadge";
 import EmptyState from "@/components/design/EmptyState";
 import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
+import SearchInput from "@/components/design/SearchInput";
 import { Button } from "@/components/ui/button";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/errors";
 import { staggerContainer } from "@/lib/motion";
@@ -47,6 +48,10 @@ export default function AIAssistantPage() {
   const [summaryNotice, setSummaryNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+
+  // Part 4 (AI Assistant dashboard): search over Recent AI Insights history, client-side (same
+  // scale/convention as app/files/page.tsx's in-memory filtering).
+  const [insightSearch, setInsightSearch] = useState("");
 
   const fetchAll = useCallback(
     async (token: string) => {
@@ -138,6 +143,16 @@ export default function AIAssistantPage() {
       setPdfLoading(false);
     }
   };
+
+  const filteredInsights = insights.filter((i) => {
+    if (!insightSearch.trim()) return true;
+    const q = insightSearch.toLowerCase();
+    return (
+      (TYPE_LABEL[i.type] || i.type).toLowerCase().includes(q) ||
+      (i.sourceType || "").toLowerCase().includes(q) ||
+      i.status.toLowerCase().includes(q)
+    );
+  });
 
   const okCount = insights.filter((i) => i.status === "ok").length;
   const errorCount = insights.filter((i) => i.status === "error").length;
@@ -267,18 +282,25 @@ export default function AIAssistantPage() {
           </section>
 
           <section>
-            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground mb-4">
-              <History size={20} className="text-purple-300" />
-              Recent AI Insights
-            </h2>
+            <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
+                <History size={20} className="text-purple-300" />
+                Recent AI Insights
+              </h2>
+              {insights.length > 0 && (
+                <SearchInput value={insightSearch} onChange={setInsightSearch} placeholder="Search by type, source, or status..." className="sm:w-72" />
+              )}
+            </div>
             {insights.length === 0 ? (
               <EmptyState
                 icon={Sparkles}
                 title="No AI insights yet"
                 description="Use the Explain with AI button on a detection in the Threat Center or DLP Center to generate your first insight."
               />
+            ) : filteredInsights.length === 0 ? (
+              <EmptyState icon={Sparkles} title="No matching insights" description="Nothing matches your current search." />
             ) : (
-              <DataTable columns={columns} rows={insights} rowKey={(i) => i._id} emptyLabel="No AI insights yet." />
+              <DataTable columns={columns} rows={filteredInsights} rowKey={(i) => i._id} emptyLabel="No AI insights yet." />
             )}
           </section>
         </div>

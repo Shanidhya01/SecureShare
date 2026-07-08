@@ -21,6 +21,7 @@ import toast from "react-hot-toast";
 import { getDeviceId } from "@/lib/security/fingerprint";
 import { apiErrorCode } from "@/lib/errors";
 import ProgressTimeline, { type TimelineStep, type TimelineStepState } from "@/components/design/ProgressTimeline";
+import ExplainWithAIButton from "@/components/ai/ExplainWithAIButton";
 
 type FileMeta = {
   encryptionVersion: number;
@@ -366,12 +367,17 @@ export default function FileDownloadPage() {
                 {meta.quarantined ? (
                   <div className="p-4 bg-destructive/15 border border-destructive/40 rounded-lg flex items-start gap-3">
                     <Bug size={20} className="text-destructive shrink-0 mt-0.5" />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-destructive text-sm font-semibold">This file is quarantined</p>
                       <p className="text-destructive/80 text-xs mt-1">
                         SecureShare&apos;s threat scanner flagged this upload as {meta.riskLevel || "high"} risk. Download has
                         been disabled to protect you. Contact the file&apos;s owner if you believe this is a mistake.
                       </p>
+                      {loggedIn && (
+                        <div className="mt-3">
+                          <ExplainWithAIButton sourceType="File" sourceId={fileId} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : meta.limitReached ? (
@@ -381,7 +387,14 @@ export default function FileDownloadPage() {
                 ) : decryptError ? (
                   <div className="mb-4 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3">
                     <AlertCircle size={20} className="text-destructive shrink-0 mt-0.5" />
-                    <p className="text-destructive text-sm">{decryptError}</p>
+                    <div className="min-w-0">
+                      <p className="text-destructive text-sm">{decryptError}</p>
+                      {loggedIn && decryptError.toLowerCase().includes("tamper") && (
+                        <div className="mt-3">
+                          <ExplainWithAIButton sourceType="File" sourceId={fileId} />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : null}
 
