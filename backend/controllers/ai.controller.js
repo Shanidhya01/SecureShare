@@ -54,7 +54,7 @@ export const explainThreat = async (req, res) => {
       sourceId,
       prompt: result.prompt,
       response: result.explanation || result.rawText || null,
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -100,7 +100,7 @@ export const explainRisk = async (req, res) => {
       sourceId,
       prompt: result.prompt,
       response: result.explanation || result.rawText || null,
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -147,7 +147,7 @@ export const askAssistant = async (req, res) => {
       type: "chat_response",
       prompt: result.prompt,
       response: result.answer,
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });
@@ -202,7 +202,7 @@ export const generateSummary = async (req, res) => {
       owner: req.user.id,
       type: "incident_summary",
       response: { stats: result.stats, narrative: result.narrative },
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
       status: result.status,
       errorMessage: result.errorMessage || undefined
     });

@@ -10,7 +10,11 @@
  */
 const GEMINI_HOST = "https://generativelanguage.googleapis.com";
 const GEMINI_TIMEOUT_MS = 15000;
-const DEFAULT_MODEL = "gemini-1.5-flash";
+// gemini-1.5-flash was retired from the v1beta API - gemini-2.0-flash is the current stable
+// equivalent. Override via GEMINI_MODEL without a code change if Google retires this one too;
+// GET https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY lists what's actually
+// available/supported for a given API key at any point in time.
+const DEFAULT_MODEL = "gemini-2.0-flash";
 
 /**
  * @param {string} prompt - the fully-assembled prompt string (built by a services/ai/promptTemplates.js function)
