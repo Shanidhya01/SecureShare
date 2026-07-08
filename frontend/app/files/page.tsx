@@ -33,6 +33,7 @@ type FileMeta = {
   quarantined?: boolean;
   dlpRisk?: "None" | "Low" | "Medium" | "High" | "Critical" | null;
   dlpDecision?: "allow" | "warn" | "require_approval" | "block" | null;
+  threatScore?: number;
   policy?: FilePolicy;
 };
 

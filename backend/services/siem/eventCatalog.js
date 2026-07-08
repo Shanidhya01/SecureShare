@@ -118,12 +118,20 @@ export const TYPE_META = {
   background_job_failed: { siemType: "BACKGROUND_JOB_FAILED", severity: "MEDIUM", category: "PLATFORM", label: "Background Job Failed" },
   backup_completed: { siemType: "BACKUP_COMPLETED", severity: "INFO", category: "PLATFORM", label: "Backup Completed" },
   backup_failed: { siemType: "BACKUP_FAILED", severity: "HIGH", category: "PLATFORM", label: "Backup Failed" },
-  platform_report_generated: { siemType: "PLATFORM_REPORT_GENERATED", severity: "INFO", category: "PLATFORM", label: "Platform Report Generated" }
+  platform_report_generated: { siemType: "PLATFORM_REPORT_GENERATED", severity: "INFO", category: "PLATFORM", label: "Platform Report Generated" },
+
+  // --- AI Security Assistant: Gemini-powered explanations/summaries/chat over existing detection
+  // data. Category "AI" is distinct from "AUTOMATION" - these are user-initiated read/explain
+  // actions, not autonomous SOAR responses, so they shouldn't be treated as automation noise.
+  ai_explanation_requested: { siemType: "AI_EXPLANATION_REQUESTED", severity: "INFO", category: "AI", label: "AI Explanation Requested" },
+  ai_incident_summary_generated: { siemType: "AI_INCIDENT_SUMMARY_GENERATED", severity: "INFO", category: "AI", label: "AI Incident Summary Generated" },
+  ai_chat_query: { siemType: "AI_CHAT_QUERY", severity: "INFO", category: "AI", label: "AI Chat Query" },
+  ai_risk_explanation_requested: { siemType: "AI_RISK_EXPLANATION_REQUESTED", severity: "INFO", category: "AI", label: "AI Risk Explanation Requested" }
 };
 
 export const SEVERITY_LEVELS = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 export const CATEGORIES = [
-  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM"
+  "AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM", "AI"
 ];
 
 export function resolveEventMeta(type) {

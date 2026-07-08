@@ -23,9 +23,13 @@ import {
   Download,
   Activity,
   ClipboardCheck,
+  Sparkles,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { useRole } from "@/hooks/useRole";
 import { AdminOnly } from "@/components/rbac/RoleGuard";
+import { askAssistant } from "@/lib/ai";
 import {
   AreaChart,
   Area,
@@ -48,7 +52,7 @@ import EventTimeline, { type EventTimelineItem } from "@/components/design/Event
 import { StatsSkeleton } from "@/components/design/Skeletons";
 import { computeSecurityScore } from "@/lib/securityScore";
 import { bucketByDay } from "@/lib/chartHelpers";
-import { apiErrorStatus } from "@/lib/errors";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/errors";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
 import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
 
@@ -97,6 +101,14 @@ export default function DashboardOverview() {
   const [compliance, setCompliance] = useState<ComplianceDashboard | null>(null);
   const { isAdmin } = useRole();
   const [loading, setLoading] = useState(true);
+
+  // AI Security Assistant (Feature 1: Q&A widget) - deliberately minimal here (single question,
+  // single answer, no thread/history); the dedicated /ai-assistant page is where a fuller chat
+  // experience lives.
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [askNotice, setAskNotice] = useState<string | null>(null);
 
   const fetchAll = useCallback(
     async (token: string) => {
@@ -208,8 +220,32 @@ export default function DashboardOverview() {
     { label: "DLP Center", href: "/dlp", icon: Eye },
     { label: "Security Center", href: "/security", icon: ShieldCheck },
     { label: "Audit Logs", href: "/audit", icon: ScrollText },
+    { label: "AI Security Assistant", href: "/ai-assistant", icon: Sparkles },
     ...(isAdmin ? [{ label: "Compliance Center", href: "/compliance", icon: ClipboardCheck }] : []),
   ];
+
+  const handleAsk = async () => {
+    const trimmed = question.trim();
+    if (!trimmed || asking) return;
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    setAsking(true);
+    setAnswer(null);
+    setAskNotice(null);
+    try {
+      const res = await askAssistant(trimmed, token);
+      if (res.status === "ok") {
+        setAnswer(res.answer);
+      } else {
+        setAskNotice(res.message);
+      }
+    } catch (err: unknown) {
+      setAskNotice(apiErrorMessage(err, "AI Security Assistant failed to answer. Try again later."));
+    } finally {
+      setAsking(false);
+    }
+  };
 
   return (
     <div>
@@ -265,6 +301,53 @@ export default function DashboardOverview() {
             </Link>
           ))}
         </div>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-border bg-card p-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground mb-4">
+          <Sparkles size={16} className="text-primary" />
+          Ask the AI Security Assistant
+        </h3>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+            placeholder="e.g. Why was my upload blocked? Summarize today's incidents."
+            disabled={asking}
+            className="flex-1 px-4 py-2.5 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 transition-all disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={handleAsk}
+            disabled={asking || !question.trim()}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold disabled:opacity-50 shrink-0"
+          >
+            {asking ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Ask
+          </button>
+        </div>
+
+        {askNotice && (
+          <div className="mt-4 p-3 bg-muted border border-border rounded-lg flex items-start gap-2">
+            <AlertCircle className="text-muted-foreground shrink-0 mt-0.5" size={14} />
+            <p className="text-muted-foreground text-xs">{askNotice}</p>
+          </div>
+        )}
+
+        {answer && (
+          <div className="mt-4 p-4 bg-primary/5 border border-primary/20 rounded-lg">
+            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{answer}</p>
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-muted-foreground">
+          Answers use your real SecureShare data only - for a fuller history and more questions, visit the{" "}
+          <Link href="/ai-assistant" className="text-primary hover:text-primary/80 font-medium">
+            AI Security Assistant
+          </Link>{" "}
+          page.
+        </p>
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">

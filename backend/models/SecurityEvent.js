@@ -44,7 +44,9 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 13: Production Hardening & Cloud Platform Operations
       "platform_health_changed", "mongodb_offline", "redis_offline", "clamav_offline",
       "cloudinary_failure", "queue_failure", "high_api_latency", "background_job_failed",
-      "backup_completed", "backup_failed", "platform_report_generated"
+      "backup_completed", "backup_failed", "platform_report_generated",
+      // AI Security Assistant: Gemini-powered explanations/summaries/chat
+      "ai_explanation_requested", "ai_incident_summary_generated", "ai_chat_query", "ai_risk_explanation_requested"
     ]
   },
   message: String,
@@ -96,13 +98,15 @@ const securityEventSchema = new mongoose.Schema({
       // Phase 13: Production Hardening & Cloud Platform Operations
       "PLATFORM_HEALTH_CHANGED", "MONGODB_OFFLINE", "REDIS_OFFLINE", "CLAMAV_OFFLINE",
       "CLOUDINARY_FAILURE", "QUEUE_FAILURE", "HIGH_API_LATENCY", "BACKGROUND_JOB_FAILED",
-      "BACKUP_COMPLETED", "BACKUP_FAILED", "PLATFORM_REPORT_GENERATED"
+      "BACKUP_COMPLETED", "BACKUP_FAILED", "PLATFORM_REPORT_GENERATED",
+      // AI Security Assistant: Gemini-powered explanations/summaries/chat
+      "AI_EXPLANATION_REQUESTED", "AI_INCIDENT_SUMMARY_GENERATED", "AI_CHAT_QUERY", "AI_RISK_EXPLANATION_REQUESTED"
     ]
   },
   severity: { type: String, enum: ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "INFO" },
   category: {
     type: String,
-    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM"]
+    enum: ["AUTH", "ENCRYPTION", "SIGNATURE", "ZERO_TRUST", "THREAT", "DLP", "UPLOAD", "DOWNLOAD", "DEVICE", "SESSION", "AUTOMATION", "IAM", "COMPLIANCE", "CLOUD", "DEVSECOPS", "PLATFORM", "AI"]
   },
   // Set by the correlation engine once this event has been grouped into an Incident.
   correlationId: String,

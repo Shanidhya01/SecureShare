@@ -18,6 +18,7 @@ import { apiErrorStatus } from "@/lib/errors";
 import { bucketByDay } from "@/lib/chartHelpers";
 import { motion } from "framer-motion";
 import { staggerContainer } from "@/lib/motion";
+import ExplainWithAIButton from "@/components/ai/ExplainWithAIButton";
 
 type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 
@@ -375,6 +376,7 @@ export default function ThreatCenterPage() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <StatusBadge label={f.riskLevel || "Low"} tone={riskTone[f.riskLevel || "Low"] ?? "neutral"} />
+                      <ExplainWithAIButton sourceType="File" sourceId={f._id} />
                       <button
                         type="button"
                         onClick={() => handleRelease(f._id)}
@@ -405,7 +407,10 @@ export default function ThreatCenterPage() {
                   <div key={s._id} className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-foreground text-sm font-semibold truncate">{s.originalFilename}</p>
-                      <StatusBadge label={s.riskLevel} tone={riskTone[s.riskLevel] ?? "neutral"} />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <StatusBadge label={s.riskLevel} tone={riskTone[s.riskLevel] ?? "neutral"} />
+                        <ExplainWithAIButton sourceType="ThreatScan" sourceId={s._id} />
+                      </div>
                     </div>
                     <p className="text-muted-foreground text-xs mt-1">
                       {s.clamav?.status === "infected" && `ClamAV: ${s.clamav.threatNames.join(", ")}`}

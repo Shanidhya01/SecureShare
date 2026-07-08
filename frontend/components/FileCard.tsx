@@ -22,6 +22,7 @@ import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { downloadFileWithIpTracking } from "@/lib/ipTracking";
 import StatusBadge, { decisionTone, riskTone } from "@/components/design/StatusBadge";
+import RiskExplainButton from "@/components/ai/RiskExplainButton";
 import { fadeInUp } from "@/lib/motion";
 import { hasZeroTrustPolicy, type FilePolicy } from "@/lib/types";
 
@@ -45,6 +46,7 @@ type FileDoc = {
   scanStatus?: string;
   dlpRisk?: "None" | "Low" | "Medium" | "High" | "Critical" | null;
   dlpDecision?: "allow" | "warn" | "require_approval" | "block" | null;
+  threatScore?: number;
   policy?: FilePolicy;
 };
 
@@ -350,6 +352,19 @@ export default function FileCard({
         ) : null}
         {zeroTrustPolicyActive && <StatusBadge label="Zero Trust" tone="info" />}
       </div>
+
+      {/* AI Security Assistant - Feature 4 (AI Risk Explanation). Only rendered once Threat
+          Intelligence enrichment has actually produced a score for this file (threatScore > 0) -
+          most files never reach that path, so this stays invisible rather than showing a
+          misleading "0/100" for everything. */}
+      {typeof file.threatScore === "number" && file.threatScore > 0 && (
+        <div className="flex items-center justify-between gap-2 mb-4 rounded-lg border border-border bg-background/40 px-3 py-2">
+          <span className="text-xs text-muted-foreground">
+            Risk Score: <span className="font-semibold text-foreground">{file.threatScore}/100</span>
+          </span>
+          <RiskExplainButton sourceType="File" sourceId={file._id} />
+        </div>
+      )}
 
       {/* Info */}
       <div className="space-y-2 mb-4 text-sm">

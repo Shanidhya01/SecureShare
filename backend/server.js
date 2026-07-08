@@ -22,6 +22,7 @@ import complianceRoutes from "./routes/compliance.routes.js";
 import cloudRoutes from "./routes/cloud.routes.js";
 import devsecopsRoutes from "./routes/devsecops.routes.js";
 import platformRoutes from "./routes/platform.routes.js";
+import aiRoutes from "./routes/ai.routes.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { requestContext } from "./middleware/requestContext.middleware.js";
 import { metrics } from "./middleware/metrics.middleware.js";
@@ -95,6 +96,7 @@ app.use("/api/compliance", complianceRoutes);
 app.use("/api/cloud", cloudRoutes);
 app.use("/api/devsecops", devsecopsRoutes);
 app.use("/api/platform", platformRoutes);
+app.use("/api/ai", aiRoutes);
 app.use("/api", ipRoutes);
 
 async function firstAdmin() {

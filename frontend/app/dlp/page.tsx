@@ -14,6 +14,7 @@ import DataTable, { type DataTableColumn } from "@/components/design/DataTable";
 import { StatsSkeleton, TableSkeleton } from "@/components/design/Skeletons";
 import { apiErrorStatus } from "@/lib/errors";
 import { staggerContainer } from "@/lib/motion";
+import ExplainWithAIButton from "@/components/ai/ExplainWithAIButton";
 
 type Severity = "None" | "Low" | "Medium" | "High" | "Critical";
 type Decision = "allow" | "warn" | "require_approval" | "block";
@@ -297,6 +298,7 @@ export default function DLPCenterPage() {
                       <div className="flex items-center gap-2 shrink-0">
                         <StatusBadge label={s.severity} tone={severityTone[s.severity] ?? "neutral"} />
                         <StatusBadge label={decisionLabel[s.decision]} tone={decisionTone[s.decision] ?? "neutral"} />
+                        <ExplainWithAIButton sourceType="DLPScan" sourceId={s._id} />
                       </div>
                     </div>
                     <p className="text-muted-foreground text-xs mt-1">
@@ -348,6 +350,7 @@ export default function DLPCenterPage() {
                       <div className="flex items-center gap-2 shrink-0">
                         <StatusBadge label={s.severity} tone={severityTone[s.severity] ?? "neutral"} />
                         <StatusBadge label={decisionLabel[s.decision]} tone={decisionTone[s.decision] ?? "neutral"} />
+                        <ExplainWithAIButton sourceType="DLPScan" sourceId={s._id} />
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">

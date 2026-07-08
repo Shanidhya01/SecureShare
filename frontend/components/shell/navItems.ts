@@ -16,6 +16,7 @@ import {
   Cloud,
   ShieldHalf,
   Activity,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,6 +41,7 @@ export const navItems: NavItem[] = [
   { label: "SOAR", href: "/soar", icon: Bot, group: "Security Operations" },
   { label: "Security Center", href: "/security", icon: ShieldCheck, group: "Security Operations" },
   { label: "Security Operations", href: "/soc", icon: Radar, group: "Security Operations" },
+  { label: "AI Security Assistant", href: "/ai-assistant", icon: Sparkles, group: "Security Operations" },
   { label: "Identity & Access", href: "/identity", icon: Fingerprint, group: "Identity & Governance" },
   { label: "Compliance", href: "/compliance", icon: ClipboardCheck, group: "Identity & Governance", adminOnly: true },
   { label: "Cloud Security", href: "/cloud-security", icon: Cloud, group: "Platform", adminOnly: true },
