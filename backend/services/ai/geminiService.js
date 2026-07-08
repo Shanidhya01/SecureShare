@@ -16,10 +16,12 @@
  */
 const OPENROUTER_HOST = "https://openrouter.ai/api/v1";
 const REQUEST_TIMEOUT_MS = 15000;
-// Free model on OpenRouter. Override via OPENROUTER_MODEL without a code change if this one is
-// retired/renamed or you want a different model - https://openrouter.ai/models lists what's
+// Free model on OpenRouter. gpt-oss-120b:free is frequently saturated (global 429s across all
+// OpenRouter users, confirmed via direct testing - not a per-account quota issue), so the smaller
+// 20b variant is used instead, which responds reliably. Override via OPENROUTER_MODEL without a
+// code change if this one gets saturated too - https://openrouter.ai/models lists what's
 // currently available (filter by "Free" to stay on no-cost models).
-const DEFAULT_MODEL = "openai/gpt-oss-120b:free";
+const DEFAULT_MODEL = "openai/gpt-oss-20b:free";
 
 /**
  * @param {string} prompt - the fully-assembled prompt string (built by a services/ai/promptTemplates.js function)
