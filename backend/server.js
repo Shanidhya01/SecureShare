@@ -52,13 +52,57 @@ app.use("/api", apiLimiter);
 
 // Fail fast instead of hanging: if MongoDB isn't connected yet (or the connection dropped), every
 // query issued by a route handler would otherwise sit in Mongoose's command buffer until it times
-// out (~10s, surfacing as a generic 500 with a "buffering timed out" message) - this middleware
-// checks the connection state up front and returns an immediate, clear 503 instead. /api/health is
+// out (~10s, surfacing as a generic 500 with a "buffering timed out" message). /api/health is
 // exempt so health checks/monitoring can still report the real DB status rather than being blocked
 // by it.
-app.use("/api", (req, res, next) => {
+//
+// Serverless-specific fix: the one-time mongoose.connect() below (module load) only runs once per
+// container. If that single attempt fails or is still racing when the first request arrives, a
+// warm container would otherwise return 503 forever for its entire lifetime with no retry. This
+// helper actively re-attempts the connection on demand instead, guarded so concurrent requests
+// share one in-flight attempt rather than each starting their own.
+let mongoReconnectPromise = null;
+
+async function ensureMongoConnected() {
+  if (mongoose.connection.readyState === 1) return true;
+  if (!process.env.MONGO_URI) return false;
+
+  if (mongoose.connection.readyState === 2) {
+    // Already connecting (e.g. cold-start race) - wait briefly for it to settle instead of
+    // firing a second, redundant connect() call.
+    await new Promise((resolve) => {
+      const cleanup = () => {
+        mongoose.connection.off("connected", done);
+        mongoose.connection.off("error", done);
+      };
+      const done = () => {
+        cleanup();
+        resolve();
+      };
+      mongoose.connection.once("connected", done);
+      mongoose.connection.once("error", done);
+      setTimeout(done, 4000);
+    });
+    return mongoose.connection.readyState === 1;
+  }
+
+  if (!mongoReconnectPromise) {
+    mongoReconnectPromise = mongoose
+      .connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 8000 })
+      .then(() => console.log("MongoDB reconnected"))
+      .catch((err) => console.error("MongoDB reconnect attempt failed:", err.message))
+      .finally(() => {
+        mongoReconnectPromise = null;
+      });
+  }
+  await mongoReconnectPromise;
+  return mongoose.connection.readyState === 1;
+}
+
+app.use("/api", async (req, res, next) => {
   if (req.path === "/health") return next();
-  if (mongoose.connection.readyState !== 1) {
+  const connected = await ensureMongoConnected();
+  if (!connected) {
     return res.status(503).json({ error: "Database unavailable. Please try again shortly." });
   }
   next();
